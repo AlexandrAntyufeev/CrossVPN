@@ -4,9 +4,11 @@ import { env } from "../config/env";
 import { logger } from "../infra/logger";
 import { AppContainer } from "./container";
 
-const HIDDIFY_APP_URL = "https://hiddify.com/app/";
 const HIDDIFY_LOGO_URL =
   "https://raw.githubusercontent.com/hiddify/hiddify-app/main/ios/Runner/Assets.xcassets/AppIcon.appiconset/iphone/app-icon-1024.png";
+const HIDDIFY_IPHONE_URL = "https://apps.apple.com/de/app/hiddify-proxy-vpn/id6596777532";
+const HIDDIFY_ANDROID_URL = "https://play.google.com/store/apps/details?id=app.hiddify.com&hl=ru";
+const HIDDIFY_WINDOWS_URL = "https://apps.microsoft.com/detail/9pdfnl3qv2s5?hl=en-US&gl=US";
 
 function formatBytes(value: bigint): string {
   const gb = Number(value) / 1024 / 1024 / 1024;
@@ -49,7 +51,7 @@ function requireMatch(match: string | undefined): string {
 
 function getMainKeyboard() {
   return new InlineKeyboard()
-    .url("Скачать Hiddify", HIDDIFY_APP_URL)
+    .text("Выбрать устройство", "start_device_picker")
     .row()
     .text("Купить", "buy_default")
     .text("Мой доступ", "my_access")
@@ -60,7 +62,7 @@ function getMainKeyboard() {
 
 function getHelpKeyboard() {
   return new InlineKeyboard()
-    .url("Скачать Hiddify", HIDDIFY_APP_URL)
+    .text("Выбрать устройство", "start_device_picker")
     .row()
     .text("Создать тикет", "support_ticket")
     .url("Написать в саппорт", `https://t.me/${env.SUPPORT_TELEGRAM_USERNAME.replace(/^@/, "")}`)
@@ -82,9 +84,9 @@ function getDeviceKeyboard() {
   return new InlineKeyboard()
     .text("iPhone", "guide:iphone")
     .text("Android", "guide:android")
-    .text("PC", "guide:pc")
+    .text("Windows", "guide:windows")
     .row()
-    .url("Скачать Hiddify", HIDDIFY_APP_URL)
+    .text("Компьютер", "guide:desktop")
     .row()
     .text("Мой доступ", "my_access");
 }
@@ -97,8 +99,8 @@ function buildStartText(amountRub: number, durationDays: number, trafficLimitGb:
   return [
     "CrossVPN",
     "",
-    "Сначала установите Hiddify.",
-    "Ниже отправил официальный значок приложения, чтобы не перепутать его с похожими клиентами.",
+    "Сначала выберите свое устройство и установите Hiddify.",
+    "После этого можно сразу переходить к оплате и получению доступа.",
     "",
     `Тариф: ${buildTariffLine(amountRub, durationDays, trafficLimitGb)}`,
     "После оплаты бот сам пришлет subscription link, QR и инструкцию для вашего устройства.",
@@ -110,9 +112,7 @@ function buildHiddifyOnboardingCaption(): string {
     "Какой клиент ставить",
     "",
     "Ищите приложение Hiddify с таким значком.",
-    "Скачивать лучше с официальной страницы Hiddify по кнопке ниже.",
-    "",
-    "После установки вернитесь в бота и нажмите «Купить».",
+    "Сейчас помогу выбрать нужную ссылку под ваше устройство.",
   ].join("\n");
 }
 
@@ -137,7 +137,73 @@ function buildPaymentText(amountRub: number): string {
   ].join("\n");
 }
 
-function buildGuideText(device: "iphone" | "android" | "pc", subscriptionUrl?: string | null): string {
+function getInstallKeyboard(device: "iphone" | "android" | "windows" | "desktop") {
+  if (device === "iphone") {
+    return new InlineKeyboard()
+      .url("Открыть App Store", HIDDIFY_IPHONE_URL)
+      .row()
+      .text("Купить", "buy_default")
+      .text("Другое устройство", "start_device_picker");
+  }
+
+  if (device === "android") {
+    return new InlineKeyboard()
+      .url("Открыть Google Play", HIDDIFY_ANDROID_URL)
+      .row()
+      .text("Купить", "buy_default")
+      .text("Другое устройство", "start_device_picker");
+  }
+
+  return new InlineKeyboard()
+    .url("Открыть Microsoft Store", HIDDIFY_WINDOWS_URL)
+    .row()
+    .text("Купить", "buy_default")
+    .text("Другое устройство", "start_device_picker");
+}
+
+function buildInstallText(device: "iphone" | "android" | "windows" | "desktop"): string {
+  if (device === "iphone") {
+    return [
+      "iPhone / iPad",
+      "",
+      "Установите Hiddify из App Store по кнопке ниже.",
+      "Если приложение не открывается в вашем App Store, попробуйте временно сменить регион магазина на страну, где приложение доступно, затем снова открыть ссылку.",
+      "",
+      "После установки вернитесь в бот и нажмите «Купить».",
+    ].join("\n");
+  }
+
+  if (device === "android") {
+    return [
+      "Android",
+      "",
+      "Установите Hiddify из Google Play по кнопке ниже.",
+      "",
+      "После установки вернитесь в бот и нажмите «Купить».",
+    ].join("\n");
+  }
+
+  if (device === "windows") {
+    return [
+      "Windows",
+      "",
+      "Установите Hiddify из Microsoft Store по кнопке ниже.",
+      "",
+      "После установки вернитесь в бот и нажмите «Купить».",
+    ].join("\n");
+  }
+
+  return [
+    "Компьютер",
+    "",
+    "Для компьютера сейчас даю ссылку на Windows Store с Hiddify.",
+    "Если вы на macOS или Linux, напишите в саппорт, и я отдельно подскажу установку.",
+    "",
+    "После установки вернитесь в бот и нажмите «Купить».",
+  ].join("\n");
+}
+
+function buildGuideText(device: "iphone" | "android" | "windows" | "desktop", subscriptionUrl?: string | null): string {
   const common = [
     "Важно:",
     "1. Ключ персональный, не передавайте его другим людям.",
@@ -174,9 +240,9 @@ function buildGuideText(device: "iphone" | "android" | "pc", subscriptionUrl?: s
   }
 
   return [
-    "Инструкция для ПК",
+    device === "windows" ? "Инструкция для Windows" : "Инструкция для компьютера",
     "",
-    "1. Установите Hiddify с официальной страницы по кнопке ниже.",
+    "1. Откройте Hiddify.",
     "2. Откройте subscription link или импортируйте QR.",
     "3. Дождитесь загрузки профиля.",
     "4. Включите подключение.",
@@ -267,7 +333,7 @@ async function sendHiddifyPhoto(
   }
 
   if (sender.reply) {
-    await sender.reply(`${caption}\n\nОфициальная страница Hiddify: ${HIDDIFY_APP_URL}`, {
+    await sender.reply(caption, {
       reply_markup: replyMarkup,
     });
   }
@@ -294,6 +360,9 @@ export function createTelegramBot(container: AppContainer) {
     await sendHiddifyPhoto(ctx as any, buildHiddifyOnboardingCaption());
     await ctx.reply(buildStartText(plan.priceRub, plan.durationDays, plan.trafficLimitGb), {
       reply_markup: getMainKeyboard(),
+    });
+    await ctx.reply("Какое у вас устройство?", {
+      reply_markup: getDeviceKeyboard(),
     });
 
     await container.notificationService.log(user.id, NotificationType.PAYMENT_LINK, { source: "start" });
@@ -445,7 +514,14 @@ export function createTelegramBot(container: AppContainer) {
     });
   });
 
-  bot.callbackQuery(/^guide:(iphone|android|pc)$/, async (ctx) => {
+  bot.callbackQuery("start_device_picker", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Какое у вас устройство?", {
+      reply_markup: getDeviceKeyboard(),
+    });
+  });
+
+  bot.callbackQuery(/^guide:(iphone|android|windows|desktop)$/, async (ctx) => {
     const tgUser = requireTelegramUser(ctx);
     const user = await container.userService.findByTelegramId(BigInt(tgUser.id));
 
@@ -457,13 +533,13 @@ export function createTelegramBot(container: AppContainer) {
     }
 
     const access = await container.subscriptionService.getAccessPackage(user.id);
-    const device = requireMatch(ctx.match?.[1]) as "iphone" | "android" | "pc";
+    const device = requireMatch(ctx.match?.[1]) as "iphone" | "android" | "windows" | "desktop";
+
+    await sendHiddifyPhoto(ctx as any, buildInstallText(device), getInstallKeyboard(device));
 
     await ctx.reply(buildGuideText(device, access?.subscriptionUrl), {
       reply_markup: getDeviceKeyboard(),
     });
-
-    await sendHiddifyPhoto(ctx as any, "Ищите именно этот значок Hiddify. Если ставите приложение на еще одно свое устройство, можно использовать тот же subscription link.");
 
     if (access?.qrCodeBuffer) {
       try {
