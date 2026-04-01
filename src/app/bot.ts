@@ -51,7 +51,7 @@ function requireMatch(match: string | undefined): string {
 
 function getMainKeyboard() {
   return new InlineKeyboard()
-    .text("Выбрать устройство", "start_device_picker")
+    .text("Установка", "start_device_picker")
     .row()
     .text("Оплатить", "buy_default")
     .text("Мой доступ", "my_access")
@@ -62,7 +62,7 @@ function getMainKeyboard() {
 
 function getHelpKeyboard() {
   return new InlineKeyboard()
-    .text("Выбрать устройство", "start_device_picker")
+    .text("Установка", "start_device_picker")
     .row()
     .text("Создать тикет", "support_ticket")
     .url("Написать в саппорт", `https://t.me/${env.SUPPORT_TELEGRAM_USERNAME.replace(/^@/, "")}`)
@@ -71,20 +71,24 @@ function getHelpKeyboard() {
 }
 
 function getPaymentKeyboard(orderId: string) {
-  const keyboard = new InlineKeyboard().text("Реквизиты", `payment_requisites:${orderId}`);
-
-  if (env.MANUAL_PAYMENT_QR_PAYLOAD) {
-    keyboard.text("Показать QR", `payment_qr:${orderId}`);
-  }
-
-  return keyboard.row().text("Я оплатил", `manual_paid:${orderId}`);
+  return new InlineKeyboard()
+    .text("Я оплатил", `manual_paid:${orderId}`)
+    .row()
+    .text("Помощь", "help");
 }
 
-function getDeviceKeyboard() {
+function getStartKeyboard() {
+  return new InlineKeyboard()
+    .text("iPhone", "setup:iphone")
+    .text("Android", "setup:android")
+    .row()
+    .text("Компьютер", "setup:desktop");
+}
+
+function getAccessDeviceKeyboard() {
   return new InlineKeyboard()
     .text("iPhone", "guide:iphone")
     .text("Android", "guide:android")
-    .text("Windows", "guide:windows")
     .row()
     .text("Компьютер", "guide:desktop")
     .row()
@@ -97,21 +101,18 @@ function buildTariffLine(amountRub: number, durationDays: number, trafficLimitGb
 
 function buildStartText(): string {
   return [
-    "ПУК",
+    "Приветствуем вас в ПУК.",
     "",
-    "Добро пожаловать.",
-    "Сначала подскажу, какой клиент установить и под какое устройство нужен ПУК.",
-    "",
-    "Выберите устройство ниже.",
+    "Уточните, для какого устройства вам нужен доступ.",
   ].join("\n");
 }
 
 function buildHiddifyOnboardingCaption(): string {
   return [
-    "Какой клиент ставить",
+    "Установка клиента",
     "",
     "Ищите приложение Hiddify с таким значком.",
-    "Сейчас спокойно подберем нужную ссылку под ваше устройство.",
+    "Сейчас подберу нужную ссылку под ваше устройство.",
   ].join("\n");
 }
 
@@ -127,7 +128,7 @@ function buildPaymentText(amountRub: number): string {
   }
 
   return [
-    "Оплата ПУК",
+    "Оплата",
     "",
     "Сделайте обычный перевод по номеру телефона в Т-Банк.",
     "После перевода вернитесь в бот и нажмите «Я оплатил».",
@@ -136,13 +137,15 @@ function buildPaymentText(amountRub: number): string {
   ].join("\n");
 }
 
-function getInstallKeyboard(device: "iphone" | "android" | "windows" | "desktop") {
+function getInstallKeyboard(device: "iphone" | "android" | "desktop") {
   if (device === "iphone") {
     return new InlineKeyboard()
       .url("Открыть App Store", HIDDIFY_IPHONE_URL)
       .row()
       .text("Клиент установил", "client_installed")
-      .text("Другое устройство", "start_device_picker");
+      .text("Другое устройство", "start_device_picker")
+      .row()
+      .text("Помощь", "help");
   }
 
   if (device === "android") {
@@ -150,17 +153,21 @@ function getInstallKeyboard(device: "iphone" | "android" | "windows" | "desktop"
       .url("Открыть Google Play", HIDDIFY_ANDROID_URL)
       .row()
       .text("Клиент установил", "client_installed")
-      .text("Другое устройство", "start_device_picker");
+      .text("Другое устройство", "start_device_picker")
+      .row()
+      .text("Помощь", "help");
   }
 
   return new InlineKeyboard()
     .url("Открыть Microsoft Store", HIDDIFY_WINDOWS_URL)
     .row()
     .text("Клиент установил", "client_installed")
-    .text("Другое устройство", "start_device_picker");
+    .text("Другое устройство", "start_device_picker")
+    .row()
+    .text("Помощь", "help");
 }
 
-function buildInstallText(device: "iphone" | "android" | "windows" | "desktop"): string {
+function buildInstallText(device: "iphone" | "android" | "desktop"): string {
   if (device === "iphone") {
     return [
       "iPhone / iPad",
@@ -182,21 +189,11 @@ function buildInstallText(device: "iphone" | "android" | "windows" | "desktop"):
     ].join("\n");
   }
 
-  if (device === "windows") {
-    return [
-      "Windows",
-      "",
-      "Установите Hiddify из Microsoft Store по кнопке ниже.",
-      "",
-      "После установки вернитесь в бот и нажмите «Клиент установил».",
-    ].join("\n");
-  }
-
   return [
     "Компьютер",
     "",
-    "Для компьютера сейчас даю ссылку на Windows Store с Hiddify.",
-    "Если вы на macOS или Linux, напишите в саппорт, и я отдельно подскажу установку.",
+    "Для компьютера даю ссылку на Hiddify в Microsoft Store.",
+    "Если вы на macOS или Linux, напишите в саппорт, и я подскажу отдельную установку.",
     "",
     "После установки вернитесь в бот и нажмите «Клиент установил».",
   ].join("\n");
@@ -213,12 +210,10 @@ function buildReadyToPayText(amountRub: number, durationDays: number, trafficLim
     "2. Делаете перевод на Т-Банк по номеру телефона.",
     "3. Возвращаетесь и нажимаете «Я оплатил».",
     "4. После ручного подтверждения бот пришлет ключ и инструкцию по подключению.",
-    "",
-    "Да, ПУК работает именно так.",
   ].join("\n");
 }
 
-function buildGuideText(device: "iphone" | "android" | "windows" | "desktop", subscriptionUrl?: string | null): string {
+function buildGuideText(device: "iphone" | "android" | "desktop", subscriptionUrl?: string | null): string {
   const common = [
     "Важно:",
     "1. Ключ персональный, не передавайте его другим людям.",
@@ -255,7 +250,7 @@ function buildGuideText(device: "iphone" | "android" | "windows" | "desktop", su
   }
 
   return [
-    device === "windows" ? "Инструкция для Windows" : "Инструкция для компьютера",
+    "Инструкция для компьютера",
     "",
     "1. Откройте Hiddify.",
     "2. Откройте subscription link или импортируйте QR.",
@@ -293,7 +288,7 @@ async function sendAccessPackage(bot: Bot, chatId: string, access: Awaited<Retur
   }
 
   await bot.api.sendMessage(chatId, buildAccessSummary(access), {
-    reply_markup: getDeviceKeyboard(),
+    reply_markup: getAccessDeviceKeyboard(),
   });
 
   if (access.qrCodeBuffer) {
@@ -309,10 +304,7 @@ async function sendAccessPackage(bot: Bot, chatId: string, access: Awaited<Retur
       });
     } catch (error) {
       logger.error({ err: error, chatId }, "Failed to send access QR");
-      await bot.api.sendMessage(
-        chatId,
-        "Subscription link уже активен. Если QR не пришел картинкой, используйте ссылку из сообщения выше.",
-      );
+        await bot.api.sendMessage(chatId, "Если QR не пришел картинкой, используйте ссылку из сообщения выше.");
     }
   }
 }
@@ -370,10 +362,11 @@ export function createTelegramBot(container: AppContainer) {
       lastName: tgUser.last_name,
     });
 
-    await sendHiddifyPhoto(ctx as any, buildHiddifyOnboardingCaption());
-    await ctx.reply(buildStartText(), {
-      reply_markup: getDeviceKeyboard(),
-    });
+    await sendHiddifyPhoto(
+      ctx as any,
+      [buildHiddifyOnboardingCaption(), "", buildStartText()].join("\n"),
+      getStartKeyboard(),
+    );
 
     await container.notificationService.log(user.id, NotificationType.PAYMENT_LINK, { source: "start" });
   });
@@ -395,7 +388,7 @@ export function createTelegramBot(container: AppContainer) {
     await ctx.answerCallbackQuery();
 
     if (env.PAYMENT_PROVIDER === "manual") {
-      await ctx.reply(`Заявка на оплату готова.\n\n${buildPaymentText(order.amountRub)}`, {
+      await ctx.reply(buildPaymentText(order.amountRub), {
         reply_markup: getPaymentKeyboard(order.id),
       });
       return;
@@ -416,8 +409,8 @@ export function createTelegramBot(container: AppContainer) {
   });
 
   bot.command("buy", async (ctx) => {
-    await ctx.reply("Сначала проверьте, что Hiddify уже установлен, а затем откройте оплату кнопкой ниже.", {
-      reply_markup: getMainKeyboard(),
+    await ctx.reply("Сначала установите Hiddify, а затем переходите к оплате.", {
+      reply_markup: getStartKeyboard(),
     });
   });
 
@@ -439,7 +432,7 @@ export function createTelegramBot(container: AppContainer) {
     }
 
     await ctx.reply(buildAccessSummary(access), {
-      reply_markup: getDeviceKeyboard(),
+      reply_markup: getAccessDeviceKeyboard(),
     });
 
     if (access.qrCodeBuffer) {
@@ -455,7 +448,7 @@ export function createTelegramBot(container: AppContainer) {
         });
       } catch (error) {
         logger.error({ err: error, userId: user.id }, "Failed to send access QR in my_access");
-        await ctx.reply("Subscription link уже активен. Если QR не пришел, используйте ссылку из сообщения выше.");
+        await ctx.reply("Если QR не пришел, используйте ссылку из сообщения выше.");
       }
     }
   });
@@ -463,7 +456,7 @@ export function createTelegramBot(container: AppContainer) {
   bot.callbackQuery("help", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      "Помощь ПУК\n\nЕсли что-то не работает, создайте тикет или сразу напишите в саппорт. Мы увидим ваш Telegram id и текущий статус доступа, поэтому сможем быстрее помочь.",
+      "Если что-то не работает, создайте тикет или сразу напишите в саппорт. Так будет проще и быстрее разобраться.",
       {
         reply_markup: getHelpKeyboard(),
       },
@@ -519,15 +512,15 @@ export function createTelegramBot(container: AppContainer) {
 
   bot.callbackQuery("pick_device", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Выберите устройство. Я покажу короткую инструкцию и еще раз отправлю ориентир по Hiddify.", {
-      reply_markup: getDeviceKeyboard(),
+    await ctx.reply("Для какого устройства показать инструкцию?", {
+      reply_markup: getAccessDeviceKeyboard(),
     });
   });
 
   bot.callbackQuery("start_device_picker", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Какое у вас устройство?", {
-      reply_markup: getDeviceKeyboard(),
+    await ctx.reply("Для какого устройства нужен доступ?", {
+      reply_markup: getStartKeyboard(),
     });
   });
 
@@ -535,8 +528,19 @@ export function createTelegramBot(container: AppContainer) {
     await ctx.answerCallbackQuery();
     const plan = await container.planService.getDefaultPlan();
     await ctx.reply(buildReadyToPayText(plan.priceRub, plan.durationDays, plan.trafficLimitGb), {
-      reply_markup: new InlineKeyboard().text(`Оплатить ${plan.priceRub} ₽`, "buy_default"),
+      reply_markup: new InlineKeyboard()
+        .text(`Оплатить ${plan.priceRub} ₽`, "buy_default")
+        .row()
+        .text("Другое устройство", "start_device_picker"),
     });
+  });
+
+  bot.callbackQuery(/^setup:(iphone|android|windows|desktop)$/, async (ctx) => {
+    const rawDevice = requireMatch(ctx.match?.[1]) as "iphone" | "android" | "windows" | "desktop";
+    const device = rawDevice === "windows" ? "desktop" : rawDevice;
+
+    await ctx.answerCallbackQuery();
+    await sendHiddifyPhoto(ctx as any, buildInstallText(device), getInstallKeyboard(device));
   });
 
   bot.callbackQuery(/^guide:(iphone|android|windows|desktop)$/, async (ctx) => {
@@ -551,15 +555,19 @@ export function createTelegramBot(container: AppContainer) {
     }
 
     const access = await container.subscriptionService.getAccessPackage(user.id);
-    const device = requireMatch(ctx.match?.[1]) as "iphone" | "android" | "windows" | "desktop";
+    const rawDevice = requireMatch(ctx.match?.[1]) as "iphone" | "android" | "windows" | "desktop";
+    const device = rawDevice === "windows" ? "desktop" : rawDevice;
 
-    await sendHiddifyPhoto(ctx as any, buildInstallText(device), getInstallKeyboard(device));
+    if (!access) {
+      await sendHiddifyPhoto(ctx as any, buildInstallText(device), getInstallKeyboard(device));
+      return;
+    }
 
-    await ctx.reply(buildGuideText(device, access?.subscriptionUrl), {
-      reply_markup: getDeviceKeyboard(),
+    await ctx.reply(buildGuideText(device, access.subscriptionUrl), {
+      reply_markup: getAccessDeviceKeyboard(),
     });
 
-    if (access?.qrCodeBuffer) {
+    if (access.qrCodeBuffer) {
       try {
         await ctx.replyWithPhoto(new InputFile(access.qrCodeBuffer, "crossvpn-access.png"), {
           caption: "Тот же QR можно использовать и для другого вашего устройства.",
@@ -590,9 +598,9 @@ export function createTelegramBot(container: AppContainer) {
 
     const qrPayload = buildQrPayload(order.amountRub);
     if (!qrPayload) {
-      await ctx.reply(
-        "Сейчас оплата принимается обычным переводом по номеру телефона в Т-Банк. Нажмите «Реквизиты», переведите сумму и потом вернитесь к кнопке «Я оплатил».",
-      );
+      await ctx.reply("Сейчас доступен только перевод по номеру телефона. После оплаты нажмите «Я оплатил».", {
+        reply_markup: getPaymentKeyboard(order.id),
+      });
       return;
     }
 
@@ -604,9 +612,8 @@ export function createTelegramBot(container: AppContainer) {
         `Сумма: ${order.amountRub} ₽`,
         `Телефон: ${env.MANUAL_PAYMENT_PHONE}`,
         `Банк: ${env.MANUAL_PAYMENT_BANK_NAME}`,
-        "",
-        "Если QR не открывает банковское приложение, используйте кнопку 'Реквизиты'.",
       ].join("\n"),
+      reply_markup: getPaymentKeyboard(order.id),
     });
   });
 
@@ -653,7 +660,7 @@ export function createTelegramBot(container: AppContainer) {
       return;
     }
 
-    await ctx.reply("Уведомили администратора. После проверки оплаты бот автоматически пришлет ваш ПУК: subscription link, QR и инструкцию.");
+    await ctx.reply("Уведомили администратора. После проверки оплаты бот пришлет ссылку, QR и короткую инструкцию.");
 
     for (const adminTelegramId of env.ADMIN_TELEGRAM_IDS) {
       await bot.api.sendMessage(
