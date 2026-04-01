@@ -42,12 +42,12 @@ def create_subscription_token() -> str:
     return uuid.uuid4().hex[:16]
 
 
-def create_vpn_email(telegram_id: str, telegram_username: str | None) -> str:
+def create_vpn_email(telegram_id: str, telegram_username: str | None, unique_suffix: str) -> str:
     username = (telegram_username or "").strip().lstrip("@")
     safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in username)
     if safe:
-      return f"{safe}_{telegram_id}"
-    return f"tg_{telegram_id}"
+        return f"{safe}_{telegram_id}_{unique_suffix}"
+    return f"tg_{telegram_id}_{unique_suffix}"
 
 
 class ThreeXUiClient:
@@ -262,8 +262,8 @@ class Handler(BaseHTTPRequestHandler):
         traffic_limit_gb = int(payload["trafficLimitGb"])
         expires_at_iso = str(payload["expiresAt"])
         expires_at_ms = int(time.mktime(time.strptime(expires_at_iso[:19], "%Y-%m-%dT%H:%M:%S"))) * 1000
-        client_email = create_vpn_email(telegram_id, telegram_username)
         sub_id = create_subscription_token()
+        client_email = create_vpn_email(telegram_id, telegram_username, sub_id[:6])
         client_comment = f"@{telegram_username}" if telegram_username else f"tg:{telegram_id}"
 
         api_payload = {
