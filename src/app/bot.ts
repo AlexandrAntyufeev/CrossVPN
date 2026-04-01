@@ -97,10 +97,10 @@ function buildTariffLine(amountRub: number, durationDays: number, trafficLimitGb
 
 function buildStartText(): string {
   return [
-    "CrossVPN",
+    "ПУК",
     "",
     "Добро пожаловать.",
-    "Сначала подскажу, какой клиент установить и под какое устройство нужен VPN.",
+    "Сначала подскажу, какой клиент установить и под какое устройство нужен ПУК.",
     "",
     "Выберите устройство ниже.",
   ].join("\n");
@@ -111,7 +111,7 @@ function buildHiddifyOnboardingCaption(): string {
     "Какой клиент ставить",
     "",
     "Ищите приложение Hiddify с таким значком.",
-    "Сейчас помогу выбрать нужную ссылку под ваше устройство.",
+    "Сейчас спокойно подберем нужную ссылку под ваше устройство.",
   ].join("\n");
 }
 
@@ -127,7 +127,7 @@ function buildPaymentText(amountRub: number): string {
   }
 
   return [
-    "Оплата CrossVPN",
+    "Оплата ПУК",
     "",
     "Сделайте обычный перевод по номеру телефона в Т-Банк.",
     "После перевода вернитесь в бот и нажмите «Я оплатил».",
@@ -213,6 +213,8 @@ function buildReadyToPayText(amountRub: number, durationDays: number, trafficLim
     "2. Делаете перевод на Т-Банк по номеру телефона.",
     "3. Возвращаетесь и нажимаете «Я оплатил».",
     "4. После ручного подтверждения бот пришлет ключ и инструкцию по подключению.",
+    "",
+    "Да, ПУК работает именно так.",
   ].join("\n");
 }
 
@@ -266,7 +268,7 @@ function buildGuideText(device: "iphone" | "android" | "windows" | "desktop", su
 
 function buildAccessSummary(access: NonNullable<Awaited<ReturnType<AppContainer["subscriptionService"]["getAccessPackage"]>>>) {
   return [
-    "Доступ активен.",
+    "ПУК активен.",
     "",
     `Подписка до: ${formatDateTime(access.expiresAt)}`,
     `Трафик: ${formatBytes(access.trafficUsedBytes)} / ${formatBytes(access.trafficLimitBytes)}`,
@@ -461,7 +463,7 @@ export function createTelegramBot(container: AppContainer) {
   bot.callbackQuery("help", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      "Помощь CrossVPN\n\nЕсли что-то не работает, создайте тикет или сразу напишите в саппорт. Мы увидим ваш Telegram id и текущий статус доступа, поэтому сможем быстрее помочь.",
+      "Помощь ПУК\n\nЕсли что-то не работает, создайте тикет или сразу напишите в саппорт. Мы увидим ваш Telegram id и текущий статус доступа, поэтому сможем быстрее помочь.",
       {
         reply_markup: getHelpKeyboard(),
       },
@@ -651,7 +653,7 @@ export function createTelegramBot(container: AppContainer) {
       return;
     }
 
-    await ctx.reply("Уведомили администратора. После проверки оплаты бот автоматически пришлет subscription link, QR и инструкцию.");
+    await ctx.reply("Уведомили администратора. После проверки оплаты бот автоматически пришлет ваш ПУК: subscription link, QR и инструкцию.");
 
     for (const adminTelegramId of env.ADMIN_TELEGRAM_IDS) {
       await bot.api.sendMessage(
@@ -682,7 +684,7 @@ export function createTelegramBot(container: AppContainer) {
         text: "Оплата подтверждена",
       });
       try {
-        await bot.api.sendMessage(order.user.telegramId.toString(), "Оплата подтверждена. Подписка активирована.");
+        await bot.api.sendMessage(order.user.telegramId.toString(), "Оплата подтверждена. ПУК активирован.");
         await sendAccessPackage(bot, order.user.telegramId.toString(), access);
         await ctx.editMessageText(
           `Заказ ${orderId} подтвержден.\nПользователь получил доступ.\nSubscription: ${access?.subscriptionUrl ?? "не найден"}`,
@@ -752,7 +754,7 @@ export function createTelegramBot(container: AppContainer) {
 
     const stats = await container.adminService.getStats();
     await ctx.reply(
-      `Статистика CrossVPN\n\nПользователи: ${stats.usersCount}\nАктивные подписки: ${stats.activeSubscriptions}\nОжидают оплаты: ${stats.pendingOrders}\nВыдано доступов: ${stats.fulfilledOrders}`,
+      `Статистика ПУК\n\nПользователи: ${stats.usersCount}\nАктивные подписки: ${stats.activeSubscriptions}\nОжидают оплаты: ${stats.pendingOrders}\nВыдано доступов: ${stats.fulfilledOrders}`,
     );
   });
 
