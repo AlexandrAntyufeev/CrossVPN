@@ -1,0 +1,198 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FULFILLED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentProvider {
+  YOOKASSA
+  MANUAL
+}
+
+enum PaymentStatus {
+  PENDING
+  WAITING_FOR_CAPTURE
+  SUCCEEDED
+  CANCELED
+  FAILED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  BLOCKED
+  CANCELLED
+}
+
+enum VpnAccountStatus {
+  ACTIVE
+  DISABLED
+  ERROR
+}
+
+enum NotificationType {
+  PAYMENT_LINK
+  PAYMENT_SUCCEEDED
+  ACCESS_ISSUED
+  EXPIRY_3_DAYS
+  EXPIRY_1_DAY
+  EXPIRED
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
+model User {
+  id               String            @id @default(cuid())
+  telegramId       BigInt            @unique
+  username         String?
+  firstName        String?
+  lastName         String?
+  role             UserRole          @default(USER)
+  isBlocked        Boolean           @default(false)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  orders           Order[]
+  subscriptions    Subscription[]
+  vpnAccounts      VpnAccount[]
+  notifications    NotificationLog[]
+  adminAuditEvents AdminAuditLog[]   @relation("AdminActions")
+  adminTargets     AdminAuditLog[]   @relation("AdminTargets")
+}
+
+model Plan {
+  id               String         @id @default(cuid())
+  code             String         @unique
+  name             String
+  priceRub         Int
+  durationDays     Int
+  trafficLimitGb   Int
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  orders           Order[]
+  subscriptions    Subscription[]
+}
+
+model Order {
+  id               String          @id @default(cuid())
+  userId           String
+  planId           String
+  amountRub        Int
+  status           OrderStatus     @default(PENDING)
+  paymentProvider  PaymentProvider
+  idempotencyKey   String          @unique
+  expiresAt        DateTime?
+  paidAt           DateTime?
+  fulfilledAt      DateTime?
+  metadataJson     Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  user             User            @relation(fields: [userId], references: [id])
+  plan             Plan            @relation(fields: [planId], references: [id])
+  payment          Payment?
+
+  @@index([userId, status])
+}
+
+model Payment {
+  id                 String          @id @default(cuid())
+  orderId            String          @unique
+  provider           PaymentProvider
+  providerPaymentId  String          @unique
+  providerChargeId   String?
+  amountRub          Int
+  currency           String
+  status             PaymentStatus
+  rawPayloadJson     Json?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  order              Order           @relation(fields: [orderId], references: [id])
+}
+
+model Subscription {
+  id                    String              @id @default(cuid())
+  userId                String
+  planId                String
+  status                SubscriptionStatus  @default(ACTIVE)
+  startedAt             DateTime
+  expiresAt             DateTime
+  trafficLimitBytes     BigInt
+  trafficUsedBytesCache BigInt              @default(0)
+  lastTrafficSyncAt     DateTime?
+  vpnAccountId          String?             @unique
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  user                  User                @relation(fields: [userId], references: [id])
+  plan                  Plan                @relation(fields: [planId], references: [id])
+  vpnAccount            VpnAccount?         @relation(fields: [vpnAccountId], references: [id])
+
+  @@index([userId, status])
+  @@index([expiresAt])
+}
+
+model VpnAccount {
+  id                 String             @id @default(cuid())
+  userId             String
+  provider           String
+  inboundId          String
+  providerClientId   String
+  clientEmail        String             @unique
+  clientUuid         String
+  subId              String?
+  subscriptionUrl    String?
+  status             VpnAccountStatus   @default(ACTIVE)
+  lastSyncAt         DateTime?
+  rawProviderJson    Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  user               User               @relation(fields: [userId], references: [id])
+  subscription       Subscription?
+
+  @@unique([provider, providerClientId])
+  @@index([userId, status])
+}
+
+model NotificationLog {
+  id            String              @id @default(cuid())
+  userId        String
+  type          NotificationType
+  status        NotificationStatus
+  payloadJson   Json?
+  sentAt        DateTime            @default(now())
+  user          User                @relation(fields: [userId], references: [id])
+
+  @@index([userId, type])
+}
+
+model AdminAuditLog {
+  id            String    @id @default(cuid())
+  adminUserId   String
+  targetUserId  String?
+  action        String
+  payloadJson   Json?
+  createdAt     DateTime  @default(now())
+  adminUser     User      @relation("AdminActions", fields: [adminUserId], references: [id])
+  targetUser    User?     @relation("AdminTargets", fields: [targetUserId], references: [id])
+
+  @@index([adminUserId, createdAt])
+}

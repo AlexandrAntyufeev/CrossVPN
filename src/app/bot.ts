@@ -1,0 +1,655 @@
+import { Bot, InlineKeyboard, InputFile } from "grammy";
+import { NotificationType } from "@prisma/client";
+import { env } from "../config/env";
+import { logger } from "../infra/logger";
+import { AppContainer } from "./container";
+
+function formatBytes(value: bigint): string {
+  const gb = Number(value) / 1024 / 1024 / 1024;
+  return `${gb.toFixed(2)} GB`;
+}
+
+function requireTelegramUser(ctx: {
+  from?: {
+    id: number;
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+  };
+}) {
+  if (!ctx.from) {
+    throw new Error("Telegram user is missing from context");
+  }
+
+  return ctx.from;
+}
+
+function requireMatch(match: string | undefined): string {
+  if (!match) {
+    throw new Error("Callback payload is missing");
+  }
+
+  return match;
+}
+
+function getMainKeyboard() {
+  return new InlineKeyboard()
+    .text("Купить", "buy_default")
+    .text("Мой доступ", "my_access")
+    .row()
+    .text("Помощь", "help")
+    .text("Инструкции", "pick_device");
+}
+
+function getHelpKeyboard() {
+  return new InlineKeyboard()
+    .text("Создать тикет", "support_ticket")
+    .url("Написать в саппорт", `https://t.me/${env.SUPPORT_TELEGRAM_USERNAME.replace(/^@/, "")}`)
+    .row()
+    .text("Инструкции", "pick_device");
+}
+
+function getPaymentKeyboard(orderId: string) {
+  return new InlineKeyboard()
+    .text("Показать QR", `payment_qr:${orderId}`)
+    .text("Реквизиты", `payment_requisites:${orderId}`)
+    .row()
+    .text("Я оплатил", `manual_paid:${orderId}`);
+}
+
+function getDeviceKeyboard() {
+  return new InlineKeyboard()
+    .text("iPhone", "guide:iphone")
+    .text("Android", "guide:android")
+    .text("PC", "guide:pc")
+    .row()
+    .text("Мой доступ", "my_access");
+}
+
+function buildPaymentText(amountRub: number): string {
+  const requisites = [
+    `Сумма: ${amountRub} ₽`,
+    `Телефон: ${env.MANUAL_PAYMENT_PHONE || "не указан"}`,
+    `Банк: ${env.MANUAL_PAYMENT_BANK_NAME || "не указан"}`,
+  ];
+
+  if (env.MANUAL_PAYMENT_RECIPIENT_NAME) {
+    requisites.push(`Получатель: ${env.MANUAL_PAYMENT_RECIPIENT_NAME}`);
+  }
+
+  return [
+    "Оплата CrossVPN",
+    "",
+    ...requisites,
+    "",
+    env.MANUAL_PAYMENT_INSTRUCTIONS,
+    "",
+    "После перевода нажмите 'Я оплатил'.",
+  ].join("\n");
+}
+
+function buildGuideText(device: "iphone" | "android" | "pc", subscriptionUrl?: string | null): string {
+  const common = [
+    "Важно:",
+    "1. Ключ персональный, не передавайте его другим людям.",
+    "2. Лимит трафика единый на все ваши устройства.",
+    "3. Один и тот же subscription можно добавить и на телефон, и на ПК, но расход идет из общего пакета.",
+    "",
+    `Subscription link: ${subscriptionUrl ?? "пока не настроен"}`,
+  ];
+
+  if (device === "iphone") {
+    return [
+      "Инструкция для iPhone",
+      "",
+      "1. Установите Hiddify.",
+      "2. Откройте subscription link или отсканируйте QR.",
+      "3. Подтвердите открытие в приложении.",
+      "4. Включите подключение в Hiddify.",
+      "",
+      ...common,
+    ].join("\n");
+  }
+
+  if (device === "android") {
+    return [
+      "Инструкция для Android",
+      "",
+      "1. Установите Hiddify.",
+      "2. Нажмите плюс в приложении.",
+      "3. Импортируйте subscription link или QR.",
+      "4. Включите подключение.",
+      "",
+      ...common,
+    ].join("\n");
+  }
+
+  return [
+    "Инструкция для ПК",
+    "",
+    "1. Установите клиент, который поддерживает subscription URL.",
+    "2. Откройте subscription link или импортируйте QR.",
+    "3. Дождитесь загрузки профиля.",
+    "4. Включите подключение.",
+    "",
+    ...common,
+  ].join("\n");
+}
+
+function buildAccessSummary(access: NonNullable<Awaited<ReturnType<AppContainer["subscriptionService"]["getAccessPackage"]>>>) {
+  return [
+    `Подписка активна до ${access.expiresAt.toISOString()}.`,
+    `Трафик: ${formatBytes(access.trafficUsedBytes)} / ${formatBytes(access.trafficLimitBytes)}`,
+    `Subscription link: ${access.subscriptionUrl ?? "не настроен"}`,
+    "",
+    "Выберите устройство, для которого показать инструкцию.",
+  ].join("\n");
+}
+
+function buildQrPayload(amountRub: number): string | null {
+  if (!env.MANUAL_PAYMENT_QR_PAYLOAD) {
+    return null;
+  }
+
+  return env.MANUAL_PAYMENT_QR_PAYLOAD.replaceAll("{amount}", amountRub.toString());
+}
+
+async function sendAccessPackage(bot: Bot, chatId: string, access: Awaited<ReturnType<AppContainer["subscriptionService"]["getAccessPackage"]>>) {
+  if (!access) {
+    await bot.api.sendMessage(chatId, "Доступ пока не найден.");
+    return;
+  }
+
+  await bot.api.sendMessage(chatId, buildAccessSummary(access), {
+    reply_markup: getDeviceKeyboard(),
+  });
+
+  if (access.qrCodeBuffer) {
+    try {
+      await bot.api.sendPhoto(chatId, new InputFile(access.qrCodeBuffer, "crossvpn-access.png"), {
+        caption: [
+          "QR для подключения",
+          "",
+          ...access.instructions,
+          "",
+          "Ключ персональный. Общий трафик делится между всеми вашими устройствами.",
+        ].join("\n"),
+      });
+    } catch (error) {
+      logger.error({ err: error, chatId }, "Failed to send access QR");
+      await bot.api.sendMessage(
+        chatId,
+        "Subscription link уже активен. Если QR не пришел картинкой, используйте ссылку из сообщения выше.",
+      );
+    }
+  }
+}
+
+export function createTelegramBot(container: AppContainer) {
+  const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+
+  bot.command("start", async (ctx) => {
+    const tgUser = ctx.from;
+    if (!tgUser) {
+      return;
+    }
+
+    const user = await container.userService.upsertTelegramUser({
+      telegramId: BigInt(tgUser.id),
+      username: tgUser.username,
+      firstName: tgUser.first_name,
+      lastName: tgUser.last_name,
+    });
+
+    const plan = await container.planService.getDefaultPlan();
+
+    await ctx.reply(
+      `CrossVPN\n\nТариф: ${plan.priceRub} ₽ / ${plan.durationDays} дней / ${plan.trafficLimitGb} GB\n\nБот автоматически выдаст VPN-доступ после оплаты.`,
+      { reply_markup: getMainKeyboard() },
+    );
+
+    await container.notificationService.log(user.id, NotificationType.PAYMENT_LINK, { source: "start" });
+  });
+
+  bot.callbackQuery("buy_default", async (ctx) => {
+    const tgUser = ctx.from;
+    const user = await container.userService.upsertTelegramUser({
+      telegramId: BigInt(tgUser.id),
+      username: tgUser.username,
+      firstName: tgUser.first_name,
+      lastName: tgUser.last_name,
+    });
+
+    const plan = await container.planService.getDefaultPlan();
+    const order = await container.orderService.createPendingOrder(user.id, plan.id, plan.priceRub);
+
+    await ctx.answerCallbackQuery();
+
+    if (env.PAYMENT_PROVIDER === "manual") {
+      await ctx.reply(buildPaymentText(order.amountRub), {
+        reply_markup: getPaymentKeyboard(order.id),
+      });
+      return;
+    }
+
+    const payment = await container.paymentService.createCheckout(
+      order.id,
+      order.amountRub,
+      `CrossVPN ${plan.name}`,
+      order.idempotencyKey,
+    );
+
+    await ctx.reply(`Оплата готова.\n\nСумма: ${order.amountRub} ₽\nСсылка: ${payment.confirmationUrl ?? "не получена"}`, {
+      reply_markup: payment.confirmationUrl
+        ? new InlineKeyboard().url("Оплатить", payment.confirmationUrl)
+        : undefined,
+    });
+  });
+
+  bot.command("buy", async (ctx) => {
+    await ctx.reply("Используйте кнопку ниже для покупки.", {
+      reply_markup: getMainKeyboard(),
+    });
+  });
+
+  bot.callbackQuery("my_access", async (ctx) => {
+    const tgUser = ctx.from;
+    const user = await container.userService.findByTelegramId(BigInt(tgUser.id));
+
+    await ctx.answerCallbackQuery();
+
+    if (!user) {
+      await ctx.reply("Пока нет активного доступа. Нажмите /start и оформите подписку.");
+      return;
+    }
+
+    const access = await container.subscriptionService.getAccessPackage(user.id);
+    if (!access) {
+      await ctx.reply("Активная подписка не найдена.");
+      return;
+    }
+
+    await ctx.reply(buildAccessSummary(access), {
+      reply_markup: getDeviceKeyboard(),
+    });
+
+    if (access.qrCodeBuffer) {
+      try {
+        await ctx.replyWithPhoto(new InputFile(access.qrCodeBuffer, "crossvpn-access.png"), {
+          caption: [
+            "QR для подключения",
+            "",
+            ...access.instructions,
+            "",
+            "Ключ персональный. Общий лимит трафика один на все устройства.",
+          ].join("\n"),
+        });
+      } catch (error) {
+        logger.error({ err: error, userId: user.id }, "Failed to send access QR in my_access");
+        await ctx.reply("Subscription link уже активен. Если QR не пришел, используйте ссылку из сообщения выше.");
+      }
+    }
+  });
+
+  bot.callbackQuery("help", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      "Помощь CrossVPN\n\nЕсли что-то не работает, создайте тикет или сразу напишите в саппорт. В тикете мы увидим ваш Telegram id и сможем быстрее помочь.",
+      {
+        reply_markup: getHelpKeyboard(),
+      },
+    );
+  });
+
+  bot.callbackQuery("support_ticket", async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    const user = await container.userService.upsertTelegramUser({
+      telegramId: BigInt(tgUser.id),
+      username: tgUser.username,
+      firstName: tgUser.first_name,
+      lastName: tgUser.last_name,
+    });
+
+    await ctx.answerCallbackQuery({
+      text: "Тикет создан",
+    });
+
+    const access = await container.subscriptionService.getAccessPackage(user.id);
+    const supportLink = `https://t.me/${env.SUPPORT_TELEGRAM_USERNAME.replace(/^@/, "")}`;
+
+    await ctx.reply(
+      [
+        "Тикет создан.",
+        "",
+        "Что делать дальше:",
+        "1. Нажмите кнопку ниже и напишите в саппорт, что случилось.",
+        "2. По возможности приложите скрин или текст ошибки.",
+        "3. Мы уже получили ваш Telegram id и текущий статус доступа.",
+      ].join("\n"),
+      {
+        reply_markup: new InlineKeyboard().url("Написать в саппорт", supportLink),
+      },
+    );
+
+    for (const adminTelegramId of env.ADMIN_TELEGRAM_IDS) {
+      await bot.api.sendMessage(
+        adminTelegramId.toString(),
+        [
+          "Новый тикет поддержки",
+          "",
+          `User: ${user.telegramId}`,
+          `Username: @${user.username ?? "-"}`,
+          `Активный доступ: ${access ? "да" : "нет"}`,
+          `Subscription: ${access?.subscriptionUrl ?? "нет"}`,
+          "",
+          `Ссылка на саппорт: ${supportLink}`,
+        ].join("\n"),
+      );
+    }
+  });
+
+  bot.callbackQuery("pick_device", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Выберите устройство, для которого нужна инструкция.", {
+      reply_markup: getDeviceKeyboard(),
+    });
+  });
+
+  bot.callbackQuery(/^guide:(iphone|android|pc)$/, async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    const user = await container.userService.findByTelegramId(BigInt(tgUser.id));
+
+    await ctx.answerCallbackQuery();
+
+    if (!user) {
+      await ctx.reply("Сначала нажмите /start.");
+      return;
+    }
+
+    const access = await container.subscriptionService.getAccessPackage(user.id);
+    const device = requireMatch(ctx.match?.[1]) as "iphone" | "android" | "pc";
+
+    await ctx.reply(buildGuideText(device, access?.subscriptionUrl), {
+      reply_markup: getDeviceKeyboard(),
+    });
+
+    if (access?.qrCodeBuffer) {
+      try {
+        await ctx.replyWithPhoto(new InputFile(access.qrCodeBuffer, "crossvpn-access.png"), {
+          caption: "Тот же QR можно использовать и для другого вашего устройства.",
+        });
+      } catch (error) {
+        logger.error({ err: error, userId: user.id }, "Failed to send device guide QR");
+      }
+    }
+  });
+
+  bot.callbackQuery(/^payment_qr:(.+)$/, async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    const user = await container.userService.findByTelegramId(BigInt(tgUser.id));
+    const orderId = requireMatch(ctx.match?.[1]);
+
+    await ctx.answerCallbackQuery();
+
+    if (!user) {
+      await ctx.reply("Сначала нажмите /start.");
+      return;
+    }
+
+    const order = await container.orderService.findPendingById(orderId);
+    if (!order || order.userId !== user.id) {
+      await ctx.reply("Заказ не найден или уже обработан.");
+      return;
+    }
+
+    const qrPayload = buildQrPayload(order.amountRub);
+    if (!qrPayload) {
+      await ctx.reply(
+        "QR для автозаполненной оплаты пока не настроен. Пока используйте кнопку 'Реквизиты'. Как только будет готов банковский payload или готовый SBP link, бот начнет отдавать его здесь.",
+      );
+      return;
+    }
+
+    const qrBuffer = await container.qrService.toBuffer(qrPayload);
+    await ctx.replyWithPhoto(new InputFile(qrBuffer, "crossvpn-payment-qr.png"), {
+      caption: [
+        "QR для оплаты",
+        "",
+        `Сумма: ${order.amountRub} ₽`,
+        `Телефон: ${env.MANUAL_PAYMENT_PHONE}`,
+        `Банк: ${env.MANUAL_PAYMENT_BANK_NAME}`,
+        "",
+        "Если QR не открывает банковское приложение, используйте кнопку 'Реквизиты'.",
+      ].join("\n"),
+    });
+  });
+
+  bot.callbackQuery(/^payment_requisites:(.+)$/, async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    const user = await container.userService.findByTelegramId(BigInt(tgUser.id));
+    const orderId = requireMatch(ctx.match?.[1]);
+
+    await ctx.answerCallbackQuery();
+
+    if (!user) {
+      await ctx.reply("Сначала нажмите /start.");
+      return;
+    }
+
+    const order = await container.orderService.findPendingById(orderId);
+    if (!order || order.userId !== user.id) {
+      await ctx.reply("Заказ не найден или уже обработан.");
+      return;
+    }
+
+    await ctx.reply(buildPaymentText(order.amountRub), {
+      reply_markup: getPaymentKeyboard(order.id),
+    });
+  });
+
+  bot.callbackQuery(/^manual_paid:(.+)$/, async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    const orderId = requireMatch(ctx.match?.[1]);
+    const user = await container.userService.findByTelegramId(BigInt(tgUser.id));
+
+    await ctx.answerCallbackQuery({
+      text: "Заявка отправлена администратору",
+    });
+
+    if (!user) {
+      await ctx.reply("Сначала нажмите /start.");
+      return;
+    }
+
+    const order = await container.orderService.findPendingById(orderId);
+    if (!order || order.userId !== user.id) {
+      await ctx.reply("Заказ не найден или уже обработан.");
+      return;
+    }
+
+    await ctx.reply("Уведомили администратора. После проверки оплаты бот автоматически пришлет доступ.");
+
+    for (const adminTelegramId of env.ADMIN_TELEGRAM_IDS) {
+      await bot.api.sendMessage(
+        adminTelegramId.toString(),
+        `Новая заявка на ручную проверку оплаты\n\nOrder: ${order.id}\nUser: ${order.user.telegramId}\nUsername: @${order.user.username ?? "-"}\nСумма: ${order.amountRub} ₽\nТариф: ${order.plan.name}`,
+        {
+          reply_markup: new InlineKeyboard()
+            .text("Подтвердить", `admin_confirm_cb:${order.id}`)
+            .text("Отклонить", `admin_reject_cb:${order.id}`)
+            .row()
+            .text("Профиль", `admin_lookup_cb:${order.user.telegramId.toString()}`),
+        },
+      );
+    }
+  });
+
+  bot.callbackQuery(/^admin_confirm_cb:(.+)$/, async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    await container.adminService.assertAdmin(BigInt(tgUser.id));
+
+    const orderId = requireMatch(ctx.match?.[1]);
+    try {
+      await container.paymentService.markOrderPaidManually(orderId);
+      const access = await container.subscriptionService.fulfillOrder(orderId);
+      const order = await container.orderService.getById(orderId);
+
+      await ctx.answerCallbackQuery({
+        text: "Оплата подтверждена",
+      });
+      try {
+        await bot.api.sendMessage(
+          order.user.telegramId.toString(),
+          "Оплата подтверждена. Подписка активирована.",
+        );
+        await sendAccessPackage(bot, order.user.telegramId.toString(), access);
+        await ctx.editMessageText(`Заказ ${orderId} подтвержден. Доступ отправлен пользователю.`);
+      } catch (deliveryError) {
+        logger.error({ err: deliveryError, orderId }, "Access was issued but Telegram delivery failed");
+        await ctx.editMessageText(
+          `Заказ ${orderId} подтвержден. Доступ создан, но отправка пользователю не удалась. Попросите пользователя нажать "Мой доступ".`,
+        );
+      }
+    } catch (error) {
+      logger.error({ err: error, orderId }, "Failed to confirm manual payment");
+      await ctx.answerCallbackQuery({
+        text: "Ошибка при выдаче доступа",
+      });
+      await ctx.reply(`Не получилось выдать доступ по заказу ${orderId}. Проверьте логи backend и 3x-ui.`);
+    }
+  });
+
+  bot.callbackQuery(/^admin_reject_cb:(.+)$/, async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    await container.adminService.assertAdmin(BigInt(tgUser.id));
+
+    const orderId = requireMatch(ctx.match?.[1]);
+    const order = await container.orderService.findPendingById(orderId);
+
+    await ctx.answerCallbackQuery({
+      text: "Заявка отклонена",
+    });
+
+    if (!order) {
+      await ctx.editMessageText(`Заказ ${orderId} уже не ожидает обработки.`);
+      return;
+    }
+
+    await container.orderService.markCancelled(orderId);
+    await ctx.editMessageText(`Заказ ${orderId} отклонен.`);
+    await bot.api.sendMessage(
+      order.user.telegramId.toString(),
+      "Платеж не подтвердился. Если это ошибка, напишите администратору и отправьте подтверждение перевода.",
+    );
+  });
+
+  bot.callbackQuery(/^admin_lookup_cb:(.+)$/, async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    await container.adminService.assertAdmin(BigInt(tgUser.id));
+
+    const telegramId = requireMatch(ctx.match?.[1]);
+    const user = await container.adminService.findUserWithAccessByTelegramId(BigInt(telegramId));
+
+    await ctx.answerCallbackQuery();
+
+    if (!user) {
+      await ctx.reply("Пользователь не найден.");
+      return;
+    }
+
+    const subscription = user.subscriptions[0];
+    await ctx.reply(
+      `Пользователь ${user.telegramId}\nUsername: @${user.username ?? "-"}\nПодписка: ${subscription?.status ?? "нет"}\nДо: ${subscription?.expiresAt.toISOString() ?? "-"}\nPlan: ${subscription?.plan.name ?? "-"}`,
+    );
+  });
+
+  bot.command("admin_stats", async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    await container.adminService.assertAdmin(BigInt(tgUser.id));
+
+    const stats = await container.adminService.getStats();
+    await ctx.reply(
+      `Статистика CrossVPN\n\nПользователи: ${stats.usersCount}\nАктивные подписки: ${stats.activeSubscriptions}\nОжидают оплаты: ${stats.pendingOrders}\nВыдано доступов: ${stats.fulfilledOrders}`,
+    );
+  });
+
+  bot.command("admin_confirm", async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    await container.adminService.assertAdmin(BigInt(tgUser.id));
+
+    const parts = ctx.message?.text?.trim().split(/\s+/) ?? [];
+    const orderId = parts[1];
+
+    if (!orderId) {
+      await ctx.reply("Использование: /admin_confirm <orderId>");
+      return;
+    }
+
+    await container.paymentService.markOrderPaidManually(orderId);
+    const access = await container.subscriptionService.fulfillOrder(orderId);
+    const order = await container.orderService.getById(orderId);
+
+    await ctx.reply(`Заказ ${orderId} подтвержден вручную и доступ выдан.`);
+
+    await ctx.api.sendMessage(
+      order.user.telegramId.toString(),
+      `Оплата подтверждена. Подписка активирована до ${access?.expiresAt.toISOString() ?? "неизвестно"}.`,
+    );
+
+    if (access?.subscriptionUrl) {
+      await ctx.api.sendMessage(order.user.telegramId.toString(), `Subscription link:\n${access.subscriptionUrl}`);
+    }
+  });
+
+  bot.command("admin_user", async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    await container.adminService.assertAdmin(BigInt(tgUser.id));
+
+    const parts = ctx.message?.text?.trim().split(/\s+/) ?? [];
+    const telegramIdRaw = parts[1];
+
+    if (!telegramIdRaw) {
+      await ctx.reply("Использование: /admin_user <telegram_id>");
+      return;
+    }
+
+    const user = await container.adminService.findUserWithAccessByTelegramId(BigInt(telegramIdRaw));
+    if (!user) {
+      await ctx.reply("Пользователь не найден.");
+      return;
+    }
+
+    const subscription = user.subscriptions[0];
+    await ctx.reply(
+      `Пользователь ${user.telegramId}\nUsername: @${user.username ?? "-"}\nПодписка: ${subscription?.status ?? "нет"}\nДо: ${subscription?.expiresAt.toISOString() ?? "-"}\nPlan: ${subscription?.plan.name ?? "-"}`,
+    );
+  });
+
+  bot.command("admin_pending", async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    await container.adminService.assertAdmin(BigInt(tgUser.id));
+
+    const orders = await container.adminService.getPendingOrders();
+    if (orders.length === 0) {
+      await ctx.reply("Нет заказов, ожидающих ручной проверки.");
+      return;
+    }
+
+    for (const order of orders) {
+      await ctx.reply(
+        `Order: ${order.id}\nUser: ${order.user.telegramId}\nUsername: @${order.user.username ?? "-"}\nСумма: ${order.amountRub} ₽\nТариф: ${order.plan.name}`,
+        {
+          reply_markup: new InlineKeyboard()
+            .text("Подтвердить", `admin_confirm_cb:${order.id}`)
+            .text("Отклонить", `admin_reject_cb:${order.id}`),
+        },
+      );
+    }
+  });
+
+  bot.catch((error) => {
+    logger.error({ err: error.error }, "Telegram bot error");
+  });
+
+  return bot;
+}
