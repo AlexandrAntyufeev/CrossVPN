@@ -147,8 +147,8 @@ export class SubscriptionService {
       subscriptionUrl,
       qrCodeBuffer,
       instructions: [
-        "1. Установите Hiddify из App Store или TestFlight.",
-        "2. Нажмите плюс в приложении.",
+        "1. Установите Hiddify с официальной страницы.",
+        "2. Откройте приложение и нажмите плюс или импорт профиля.",
         "3. Откройте subscription link или отсканируйте QR-код.",
       ],
     };

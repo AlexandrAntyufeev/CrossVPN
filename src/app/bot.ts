@@ -4,9 +4,24 @@ import { env } from "../config/env";
 import { logger } from "../infra/logger";
 import { AppContainer } from "./container";
 
+const HIDDIFY_APP_URL = "https://hiddify.com/app/";
+const HIDDIFY_LOGO_URL =
+  "https://raw.githubusercontent.com/hiddify/hiddify-app/main/ios/Runner/Assets.xcassets/AppIcon.appiconset/iphone/app-icon-1024.png";
+
 function formatBytes(value: bigint): string {
   const gb = Number(value) / 1024 / 1024 / 1024;
   return `${gb.toFixed(2)} GB`;
+}
+
+function formatDateTime(value: Date): string {
+  return value.toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function requireTelegramUser(ctx: {
@@ -34,15 +49,19 @@ function requireMatch(match: string | undefined): string {
 
 function getMainKeyboard() {
   return new InlineKeyboard()
+    .url("Скачать Hiddify", HIDDIFY_APP_URL)
+    .row()
     .text("Купить", "buy_default")
     .text("Мой доступ", "my_access")
     .row()
-    .text("Помощь", "help")
-    .text("Инструкции", "pick_device");
+    .text("Инструкции", "pick_device")
+    .text("Помощь", "help");
 }
 
 function getHelpKeyboard() {
   return new InlineKeyboard()
+    .url("Скачать Hiddify", HIDDIFY_APP_URL)
+    .row()
     .text("Создать тикет", "support_ticket")
     .url("Написать в саппорт", `https://t.me/${env.SUPPORT_TELEGRAM_USERNAME.replace(/^@/, "")}`)
     .row()
@@ -50,11 +69,13 @@ function getHelpKeyboard() {
 }
 
 function getPaymentKeyboard(orderId: string) {
-  return new InlineKeyboard()
-    .text("Показать QR", `payment_qr:${orderId}`)
-    .text("Реквизиты", `payment_requisites:${orderId}`)
-    .row()
-    .text("Я оплатил", `manual_paid:${orderId}`);
+  const keyboard = new InlineKeyboard().text("Реквизиты", `payment_requisites:${orderId}`);
+
+  if (env.MANUAL_PAYMENT_QR_PAYLOAD) {
+    keyboard.text("Показать QR", `payment_qr:${orderId}`);
+  }
+
+  return keyboard.row().text("Я оплатил", `manual_paid:${orderId}`);
 }
 
 function getDeviceKeyboard() {
@@ -63,15 +84,44 @@ function getDeviceKeyboard() {
     .text("Android", "guide:android")
     .text("PC", "guide:pc")
     .row()
+    .url("Скачать Hiddify", HIDDIFY_APP_URL)
+    .row()
     .text("Мой доступ", "my_access");
 }
 
+function buildTariffLine(amountRub: number, durationDays: number, trafficLimitGb: number): string {
+  return `${amountRub} ₽ / ${durationDays} дней / ${trafficLimitGb} GB`;
+}
+
+function buildStartText(amountRub: number, durationDays: number, trafficLimitGb: number): string {
+  return [
+    "CrossVPN",
+    "",
+    "Сначала установите Hiddify.",
+    "Ниже отправил официальный значок приложения, чтобы не перепутать его с похожими клиентами.",
+    "",
+    `Тариф: ${buildTariffLine(amountRub, durationDays, trafficLimitGb)}`,
+    "После оплаты бот сам пришлет subscription link, QR и инструкцию для вашего устройства.",
+  ].join("\n");
+}
+
+function buildHiddifyOnboardingCaption(): string {
+  return [
+    "Какой клиент ставить",
+    "",
+    "Ищите приложение Hiddify с таким значком.",
+    "Скачивать лучше с официальной страницы Hiddify по кнопке ниже.",
+    "",
+    "После установки вернитесь в бота и нажмите «Купить».",
+  ].join("\n");
+}
+
 function buildPaymentText(amountRub: number): string {
-  const requisites = [
-    `Сумма: ${amountRub} ₽`,
-    `Телефон: ${env.MANUAL_PAYMENT_PHONE || "не указан"}`,
-    `Банк: ${env.MANUAL_PAYMENT_BANK_NAME || "не указан"}`,
-  ];
+  const requisites = [`Сумма: ${amountRub} ₽`, `Перевод по номеру: ${env.MANUAL_PAYMENT_PHONE || "не указан"}`];
+
+  if (env.MANUAL_PAYMENT_BANK_NAME) {
+    requisites.push(`Банк: ${env.MANUAL_PAYMENT_BANK_NAME}`);
+  }
 
   if (env.MANUAL_PAYMENT_RECIPIENT_NAME) {
     requisites.push(`Получатель: ${env.MANUAL_PAYMENT_RECIPIENT_NAME}`);
@@ -80,11 +130,12 @@ function buildPaymentText(amountRub: number): string {
   return [
     "Оплата CrossVPN",
     "",
+    "Сделайте обычный перевод по номеру телефона в Т-Банк.",
+    "После перевода вернитесь в бот и нажмите «Я оплатил».",
+    "",
     ...requisites,
     "",
     env.MANUAL_PAYMENT_INSTRUCTIONS,
-    "",
-    "После перевода нажмите 'Я оплатил'.",
   ].join("\n");
 }
 
@@ -102,10 +153,10 @@ function buildGuideText(device: "iphone" | "android" | "pc", subscriptionUrl?: s
     return [
       "Инструкция для iPhone",
       "",
-      "1. Установите Hiddify.",
-      "2. Откройте subscription link или отсканируйте QR.",
-      "3. Подтвердите открытие в приложении.",
-      "4. Включите подключение в Hiddify.",
+      "1. Откройте Hiddify с иконкой, как на картинке выше.",
+      "2. Нажмите плюс или импорт профиля.",
+      "3. Откройте subscription link или отсканируйте QR.",
+      "4. Подтвердите импорт и включите подключение.",
       "",
       ...common,
     ].join("\n");
@@ -115,7 +166,7 @@ function buildGuideText(device: "iphone" | "android" | "pc", subscriptionUrl?: s
     return [
       "Инструкция для Android",
       "",
-      "1. Установите Hiddify.",
+      "1. Откройте Hiddify с иконкой, как на картинке выше.",
       "2. Нажмите плюс в приложении.",
       "3. Импортируйте subscription link или QR.",
       "4. Включите подключение.",
@@ -127,7 +178,7 @@ function buildGuideText(device: "iphone" | "android" | "pc", subscriptionUrl?: s
   return [
     "Инструкция для ПК",
     "",
-    "1. Установите клиент, который поддерживает subscription URL.",
+    "1. Установите Hiddify с официальной страницы по кнопке ниже.",
     "2. Откройте subscription link или импортируйте QR.",
     "3. Дождитесь загрузки профиля.",
     "4. Включите подключение.",
@@ -138,11 +189,13 @@ function buildGuideText(device: "iphone" | "android" | "pc", subscriptionUrl?: s
 
 function buildAccessSummary(access: NonNullable<Awaited<ReturnType<AppContainer["subscriptionService"]["getAccessPackage"]>>>) {
   return [
-    `Подписка активна до ${access.expiresAt.toISOString()}.`,
+    "Доступ активен.",
+    "",
+    `Подписка до: ${formatDateTime(access.expiresAt)}`,
     `Трафик: ${formatBytes(access.trafficUsedBytes)} / ${formatBytes(access.trafficLimitBytes)}`,
     `Subscription link: ${access.subscriptionUrl ?? "не настроен"}`,
     "",
-    "Выберите устройство, для которого показать инструкцию.",
+    "Ниже можно заново открыть инструкцию для iPhone, Android или ПК.",
   ].join("\n");
 }
 
@@ -185,6 +238,43 @@ async function sendAccessPackage(bot: Bot, chatId: string, access: Awaited<Retur
   }
 }
 
+async function sendHiddifyPhoto(
+  sender: {
+    replyWithPhoto?: typeof Bot.prototype.api.sendPhoto;
+    api?: Bot["api"];
+    chat?: { id: number };
+    reply?: (text: string, other?: Record<string, unknown>) => Promise<unknown>;
+  },
+  caption: string,
+  replyMarkup?: InlineKeyboard,
+) {
+  try {
+    if ("replyWithPhoto" in sender && typeof sender.replyWithPhoto === "function") {
+      await sender.replyWithPhoto(HIDDIFY_LOGO_URL, {
+        caption,
+        reply_markup: replyMarkup,
+      } as any);
+      return;
+    }
+
+    if (sender.api && sender.chat) {
+      await sender.api.sendPhoto(sender.chat.id.toString(), HIDDIFY_LOGO_URL, {
+        caption,
+        reply_markup: replyMarkup,
+      });
+      return;
+    }
+  } catch (error) {
+    logger.error({ err: error }, "Failed to send Hiddify visual");
+  }
+
+  if (sender.reply) {
+    await sender.reply(`${caption}\n\nОфициальная страница Hiddify: ${HIDDIFY_APP_URL}`, {
+      reply_markup: replyMarkup,
+    });
+  }
+}
+
 export function createTelegramBot(container: AppContainer) {
   const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
 
@@ -203,10 +293,10 @@ export function createTelegramBot(container: AppContainer) {
 
     const plan = await container.planService.getDefaultPlan();
 
-    await ctx.reply(
-      `CrossVPN\nBuild: smoke-check-2026-04-01-1745\n\nТариф: ${plan.priceRub} ₽ / ${plan.durationDays} дней / ${plan.trafficLimitGb} GB\n\nБот автоматически выдаст VPN-доступ после оплаты.`,
-      { reply_markup: getMainKeyboard() },
-    );
+    await sendHiddifyPhoto(ctx as any, buildHiddifyOnboardingCaption());
+    await ctx.reply(buildStartText(plan.priceRub, plan.durationDays, plan.trafficLimitGb), {
+      reply_markup: getMainKeyboard(),
+    });
 
     await container.notificationService.log(user.id, NotificationType.PAYMENT_LINK, { source: "start" });
   });
@@ -221,12 +311,14 @@ export function createTelegramBot(container: AppContainer) {
     });
 
     const plan = await container.planService.getDefaultPlan();
-    const order = await container.orderService.createPendingOrder(user.id, plan.id, plan.priceRub);
+    const order =
+      (await container.orderService.findLatestPendingByUser(user.id)) ??
+      (await container.orderService.createPendingOrder(user.id, plan.id, plan.priceRub));
 
     await ctx.answerCallbackQuery();
 
     if (env.PAYMENT_PROVIDER === "manual") {
-      await ctx.reply(buildPaymentText(order.amountRub), {
+      await ctx.reply(`Заявка на оплату готова.\n\n${buildPaymentText(order.amountRub)}`, {
         reply_markup: getPaymentKeyboard(order.id),
       });
       return;
@@ -247,7 +339,7 @@ export function createTelegramBot(container: AppContainer) {
   });
 
   bot.command("buy", async (ctx) => {
-    await ctx.reply("Используйте кнопку ниже для покупки.", {
+    await ctx.reply("Сначала проверьте, что Hiddify уже установлен, а затем откройте оплату кнопкой ниже.", {
       reply_markup: getMainKeyboard(),
     });
   });
@@ -294,7 +386,7 @@ export function createTelegramBot(container: AppContainer) {
   bot.callbackQuery("help", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      "Помощь CrossVPN\n\nЕсли что-то не работает, создайте тикет или сразу напишите в саппорт. В тикете мы увидим ваш Telegram id и сможем быстрее помочь.",
+      "Помощь CrossVPN\n\nЕсли что-то не работает, создайте тикет или сразу напишите в саппорт. Мы увидим ваш Telegram id и текущий статус доступа, поэтому сможем быстрее помочь.",
       {
         reply_markup: getHelpKeyboard(),
       },
@@ -350,7 +442,7 @@ export function createTelegramBot(container: AppContainer) {
 
   bot.callbackQuery("pick_device", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Выберите устройство, для которого нужна инструкция.", {
+    await ctx.reply("Выберите устройство. Я покажу короткую инструкцию и еще раз отправлю ориентир по Hiddify.", {
       reply_markup: getDeviceKeyboard(),
     });
   });
@@ -372,6 +464,8 @@ export function createTelegramBot(container: AppContainer) {
     await ctx.reply(buildGuideText(device, access?.subscriptionUrl), {
       reply_markup: getDeviceKeyboard(),
     });
+
+    await sendHiddifyPhoto(ctx as any, "Ищите именно этот значок Hiddify. Если ставите приложение на еще одно свое устройство, можно использовать тот же subscription link.");
 
     if (access?.qrCodeBuffer) {
       try {
@@ -405,7 +499,7 @@ export function createTelegramBot(container: AppContainer) {
     const qrPayload = buildQrPayload(order.amountRub);
     if (!qrPayload) {
       await ctx.reply(
-        "QR для автозаполненной оплаты пока не настроен. Пока используйте кнопку 'Реквизиты'. Как только будет готов банковский payload или готовый SBP link, бот начнет отдавать его здесь.",
+        "Сейчас оплата принимается обычным переводом по номеру телефона в Т-Банк. Нажмите «Реквизиты», переведите сумму и потом вернитесь к кнопке «Я оплатил».",
       );
       return;
     }
@@ -467,12 +561,12 @@ export function createTelegramBot(container: AppContainer) {
       return;
     }
 
-    await ctx.reply("Уведомили администратора. После проверки оплаты бот автоматически пришлет доступ.");
+    await ctx.reply("Уведомили администратора. После проверки оплаты бот автоматически пришлет subscription link, QR и инструкцию.");
 
     for (const adminTelegramId of env.ADMIN_TELEGRAM_IDS) {
       await bot.api.sendMessage(
         adminTelegramId.toString(),
-        `Новая заявка на ручную проверку оплаты\n\nOrder: ${order.id}\nUser: ${order.user.telegramId}\nUsername: @${order.user.username ?? "-"}\nСумма: ${order.amountRub} ₽\nТариф: ${order.plan.name}`,
+        `Новая заявка на ручную проверку оплаты\n\nOrder: ${order.id}\nUser: ${order.user.telegramId}\nUsername: @${order.user.username ?? "-"}\nСумма: ${order.amountRub} ₽\nТариф: ${order.plan.name}\nПеревод ожидается на ${env.MANUAL_PAYMENT_PHONE} (${env.MANUAL_PAYMENT_BANK_NAME})`,
         {
           reply_markup: new InlineKeyboard()
             .text("Подтвердить", `admin_confirm_cb:${order.id}`)
@@ -498,12 +592,11 @@ export function createTelegramBot(container: AppContainer) {
         text: "Оплата подтверждена",
       });
       try {
-        await bot.api.sendMessage(
-          order.user.telegramId.toString(),
-          "Оплата подтверждена. Подписка активирована.",
-        );
+        await bot.api.sendMessage(order.user.telegramId.toString(), "Оплата подтверждена. Подписка активирована.");
         await sendAccessPackage(bot, order.user.telegramId.toString(), access);
-        await ctx.editMessageText(`Заказ ${orderId} подтвержден. Доступ отправлен пользователю.`);
+        await ctx.editMessageText(
+          `Заказ ${orderId} подтвержден.\nПользователь получил доступ.\nSubscription: ${access?.subscriptionUrl ?? "не найден"}`,
+        );
       } catch (deliveryError) {
         logger.error({ err: deliveryError, orderId }, "Access was issued but Telegram delivery failed");
         await ctx.editMessageText(
@@ -515,7 +608,7 @@ export function createTelegramBot(container: AppContainer) {
       await ctx.answerCallbackQuery({
         text: "Ошибка при выдаче доступа",
       });
-      await ctx.reply(`Не получилось выдать доступ по заказу ${orderId}. Проверьте логи backend и 3x-ui.`);
+      await ctx.reply(`Не получилось выдать доступ по заказу ${orderId}. Я уже записал детали в логи backend и bridge.`);
     }
   });
 
