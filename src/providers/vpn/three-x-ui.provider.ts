@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from "axios";
 import crypto from "node:crypto";
 import https from "node:https";
+import { CookieJar } from "tough-cookie";
 import { env } from "../../config/env";
 import { logger } from "../../infra/logger";
 import { AppError } from "../../shared/errors/app-error";
@@ -36,23 +37,18 @@ type ThreeXUiInbound = {
 };
 
 export class ThreeXUiVpnProvider implements VpnProvider {
-  private readonly http: AxiosInstance;
+  private http: AxiosInstance | null = null;
+  private readonly cookieJar: CookieJar;
+  private readonly panelOrigin: string;
   private readonly panelBasePath: string;
   private isLoggedIn = false;
-  private sessionCookie: string | null = null;
 
   constructor() {
     const parsedUrl = new URL(env.THREE_X_UI_BASE_URL);
+    this.panelOrigin = `${parsedUrl.protocol}//${parsedUrl.host}`;
     this.panelBasePath = parsedUrl.pathname.replace(/\/$/, "");
+    this.cookieJar = new CookieJar();
 
-    this.http = axios.create({
-      baseURL: `${parsedUrl.protocol}//${parsedUrl.host}`,
-      withCredentials: true,
-      validateStatus: () => true,
-      httpsAgent: new https.Agent({
-        rejectUnauthorized: env.THREE_X_UI_VERIFY_TLS,
-      }),
-    });
   }
 
   async createClient(input: CreateVpnClientInput): Promise<CreateVpnClientResult> {
@@ -258,7 +254,8 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       throw new AppError("3x-ui credentials are not configured", 500);
     }
 
-    const response = await this.http.post(
+    const http = await this.getHttp();
+    const response = await http.post(
       this.buildPanelUrl("/login"),
       new URLSearchParams({
         username: env.THREE_X_UI_USERNAME,
@@ -273,28 +270,17 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       throw new AppError(`3x-ui login failed with status ${response.status}`, 502);
     }
 
+    const jarCookies = await this.cookieJar.getCookies(`${this.panelOrigin}${this.panelBasePath}/`);
     const rawSetCookie = response.headers["set-cookie"] as unknown;
-    const setCookieArray = Array.isArray(rawSetCookie) ? (rawSetCookie as string[]) : null;
-    const setCookieString = typeof rawSetCookie === "string" ? rawSetCookie : null;
-
-    if (setCookieArray && setCookieArray.length > 0) {
-      this.sessionCookie = setCookieArray.map((value) => value.split(";")[0]).join("; ");
-    } else if (setCookieString && setCookieString.length > 0) {
-      this.sessionCookie = setCookieString
-        .split(",")
-        .map((value) => (value.split(";")[0] ?? "").trim())
-        .join("; ");
-    } else {
-      this.sessionCookie = null;
-    }
 
     this.isLoggedIn = true;
     logger.info(
       {
         panelBasePath: this.panelBasePath,
-        hasCookie: Boolean(this.sessionCookie),
+        hasCookie: jarCookies.length > 0,
+        jarCookieKeys: jarCookies.map((cookie) => cookie.key),
         headerKeys: Object.keys(response.headers),
-        setCookieType: setCookieArray ? "array" : typeof setCookieString,
+        setCookieType: Array.isArray(rawSetCookie) ? "array" : typeof rawSetCookie,
       },
       "3x-ui login established",
     );
@@ -311,20 +297,34 @@ export class ThreeXUiVpnProvider implements VpnProvider {
     data?: unknown,
     extraHeaders?: Record<string, string>,
   ) {
-    const headers: Record<string, string> = {
-      ...(extraHeaders ?? {}),
-    };
-
-    if (this.sessionCookie) {
-      headers.Cookie = this.sessionCookie;
-    }
-
-    return this.http.request({
+    const http = await this.getHttp();
+    return http.request({
       method,
       url: this.buildPanelUrl(path),
       data,
-      headers,
+      headers: {
+        ...(extraHeaders ?? {}),
+      },
     });
+  }
+
+  private async getHttp(): Promise<AxiosInstance> {
+    if (this.http) {
+      return this.http;
+    }
+
+    const { wrapper } = await import("axios-cookiejar-support");
+    this.http = (wrapper as any)(axios.create({
+      baseURL: this.panelOrigin,
+      withCredentials: true,
+      validateStatus: () => true,
+      httpsAgent: new https.Agent({
+        rejectUnauthorized: env.THREE_X_UI_VERIFY_TLS,
+      }),
+      jar: this.cookieJar,
+    } as any)) as AxiosInstance;
+
+    return this.http;
   }
 
   private async getInbound(inboundId: string): Promise<ThreeXUiInbound> {
