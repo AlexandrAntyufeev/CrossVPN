@@ -57,8 +57,6 @@ export class ThreeXUiVpnProvider implements VpnProvider {
   }
 
   async createClient(input: CreateVpnClientInput): Promise<CreateVpnClientResult> {
-    await this.ensureLoggedIn(true);
-
     const providerClientId = crypto.randomUUID();
     const clientEmail = createVpnEmail(input.telegramId, input.telegramUsername);
     const subId = createSubscriptionToken();
@@ -84,9 +82,30 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       }),
     };
 
-    const response = await this.request("post", "/panel/api/inbounds/addClient", payloadObject, {
-      "Content-Type": "application/json",
-    });
+    const loginResponse = await this.performLoginRequest();
+    const setCookies = this.extractSetCookiesFromRawHeaders(loginResponse.rawHeaders);
+    const sessionCookie = setCookies.length > 0
+      ? setCookies.map((value) => value.split(";")[0]).join("; ")
+      : null;
+
+    logger.info(
+      {
+        panelBasePath: this.panelBasePath,
+        hasCookie: Boolean(sessionCookie),
+        rawHeaderNames: loginResponse.rawHeaders.filter((_, index) => index % 2 === 0),
+      },
+      "3x-ui native login for createClient",
+    );
+
+    if (!sessionCookie) {
+      throw new AppError("3x-ui login did not return a session cookie", 502);
+    }
+
+    const response = await this.performNativeJsonRequest(
+      "/panel/api/inbounds/addClient",
+      payloadObject,
+      sessionCookie,
+    );
 
     logger.info(
       {
@@ -99,16 +118,13 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       "3x-ui addClient response",
     );
 
-    if (response.status >= 400 || response.data?.success === false) {
+    const responseData = response.data as { success?: boolean } | string | null;
+
+    if (response.status >= 400 || (typeof responseData === "object" && responseData?.success === false)) {
       throw new AppError(
         `3x-ui addClient failed with status ${response.status}: ${this.stringifyResponse(response.data)}`,
         502,
       );
-    }
-
-    const createdClient = await this.findClientById(input.inboundId, providerClientId);
-    if (!createdClient) {
-      throw new AppError("3x-ui addClient returned success but client was not found on read-back", 502);
     }
 
     return {
@@ -121,7 +137,7 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       subscriptionUrl: this.buildSubscriptionUrl(subId),
       raw: {
         addClientResponse: response.data,
-        createdClient,
+        nativeLoginHeaders: loginResponse.rawHeaders,
       },
     };
   }
@@ -364,6 +380,53 @@ export class ThreeXUiVpnProvider implements VpnProvider {
     }
 
     return cookies;
+  }
+
+  private async performNativeJsonRequest(
+    path: string,
+    payload: Record<string, unknown>,
+    sessionCookie: string,
+  ): Promise<{ status: number; data: unknown }> {
+    const requestUrl = new URL(`${this.panelOrigin}${this.buildPanelUrl(path)}`);
+    const body = JSON.stringify(payload);
+
+    return new Promise((resolve, reject) => {
+      const request = https.request(
+        requestUrl,
+        {
+          method: "POST",
+          rejectUnauthorized: env.THREE_X_UI_VERIFY_TLS,
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+            Cookie: sessionCookie,
+          },
+        },
+        (response) => {
+          let responseBody = "";
+          response.on("data", (chunk) => {
+            responseBody += chunk.toString();
+          });
+          response.on("end", () => {
+            let parsed: unknown = responseBody;
+            try {
+              parsed = JSON.parse(responseBody);
+            } catch {
+              parsed = responseBody;
+            }
+
+            resolve({
+              status: response.statusCode ?? 500,
+              data: parsed,
+            });
+          });
+        },
+      );
+
+      request.on("error", reject);
+      request.write(body);
+      request.end();
+    });
   }
 
   private async getInbound(inboundId: string): Promise<ThreeXUiInbound> {
