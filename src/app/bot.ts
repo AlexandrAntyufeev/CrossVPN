@@ -53,7 +53,7 @@ function getMainKeyboard() {
   return new InlineKeyboard()
     .text("Выбрать устройство", "start_device_picker")
     .row()
-    .text("Купить", "buy_default")
+    .text("Оплатить", "buy_default")
     .text("Мой доступ", "my_access")
     .row()
     .text("Инструкции", "pick_device")
@@ -142,7 +142,7 @@ function getInstallKeyboard(device: "iphone" | "android" | "windows" | "desktop"
     return new InlineKeyboard()
       .url("Открыть App Store", HIDDIFY_IPHONE_URL)
       .row()
-      .text("Купить", "buy_default")
+      .text("Клиент установил", "client_installed")
       .text("Другое устройство", "start_device_picker");
   }
 
@@ -150,14 +150,14 @@ function getInstallKeyboard(device: "iphone" | "android" | "windows" | "desktop"
     return new InlineKeyboard()
       .url("Открыть Google Play", HIDDIFY_ANDROID_URL)
       .row()
-      .text("Купить", "buy_default")
+      .text("Клиент установил", "client_installed")
       .text("Другое устройство", "start_device_picker");
   }
 
   return new InlineKeyboard()
     .url("Открыть Microsoft Store", HIDDIFY_WINDOWS_URL)
     .row()
-    .text("Купить", "buy_default")
+    .text("Клиент установил", "client_installed")
     .text("Другое устройство", "start_device_picker");
 }
 
@@ -169,7 +169,7 @@ function buildInstallText(device: "iphone" | "android" | "windows" | "desktop"):
       "Установите Hiddify из App Store по кнопке ниже.",
       "Если приложение не открывается в вашем App Store, попробуйте временно сменить регион магазина на страну, где приложение доступно, затем снова открыть ссылку.",
       "",
-      "После установки вернитесь в бот и нажмите «Купить».",
+      "После установки вернитесь в бот и нажмите «Клиент установил».",
     ].join("\n");
   }
 
@@ -179,7 +179,7 @@ function buildInstallText(device: "iphone" | "android" | "windows" | "desktop"):
       "",
       "Установите Hiddify из Google Play по кнопке ниже.",
       "",
-      "После установки вернитесь в бот и нажмите «Купить».",
+      "После установки вернитесь в бот и нажмите «Клиент установил».",
     ].join("\n");
   }
 
@@ -189,7 +189,7 @@ function buildInstallText(device: "iphone" | "android" | "windows" | "desktop"):
       "",
       "Установите Hiddify из Microsoft Store по кнопке ниже.",
       "",
-      "После установки вернитесь в бот и нажмите «Купить».",
+      "После установки вернитесь в бот и нажмите «Клиент установил».",
     ].join("\n");
   }
 
@@ -199,7 +199,21 @@ function buildInstallText(device: "iphone" | "android" | "windows" | "desktop"):
     "Для компьютера сейчас даю ссылку на Windows Store с Hiddify.",
     "Если вы на macOS или Linux, напишите в саппорт, и я отдельно подскажу установку.",
     "",
-    "После установки вернитесь в бот и нажмите «Купить».",
+    "После установки вернитесь в бот и нажмите «Клиент установил».",
+  ].join("\n");
+}
+
+function buildReadyToPayText(amountRub: number, durationDays: number, trafficLimitGb: number): string {
+  return [
+    "Клиент установлен, можно переходить к оплате.",
+    "",
+    `Тариф: ${buildTariffLine(amountRub, durationDays, trafficLimitGb)}`,
+    "",
+    "Дальше схема простая:",
+    "1. Нажимаете «Оплатить».",
+    "2. Делаете перевод на Т-Банк по номеру телефона.",
+    "3. Возвращаетесь и нажимаете «Я оплатил».",
+    "4. После ручного подтверждения бот пришлет ключ и инструкцию по подключению.",
   ].join("\n");
 }
 
@@ -518,6 +532,14 @@ export function createTelegramBot(container: AppContainer) {
     await ctx.answerCallbackQuery();
     await ctx.reply("Какое у вас устройство?", {
       reply_markup: getDeviceKeyboard(),
+    });
+  });
+
+  bot.callbackQuery("client_installed", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const plan = await container.planService.getDefaultPlan();
+    await ctx.reply(buildReadyToPayText(plan.priceRub, plan.durationDays, plan.trafficLimitGb), {
+      reply_markup: new InlineKeyboard().text(`Оплатить ${plan.priceRub} ₽`, "buy_default"),
     });
   });
 
