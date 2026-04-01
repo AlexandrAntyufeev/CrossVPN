@@ -204,7 +204,7 @@ export function createTelegramBot(container: AppContainer) {
     const plan = await container.planService.getDefaultPlan();
 
     await ctx.reply(
-      `CrossVPN\n\nТариф: ${plan.priceRub} ₽ / ${plan.durationDays} дней / ${plan.trafficLimitGb} GB\n\nБот автоматически выдаст VPN-доступ после оплаты.`,
+      `CrossVPN\nBuild: smoke-check-2026-04-01-1745\n\nТариф: ${plan.priceRub} ₽ / ${plan.durationDays} дней / ${plan.trafficLimitGb} GB\n\nБот автоматически выдаст VPN-доступ после оплаты.`,
       { reply_markup: getMainKeyboard() },
     );
 

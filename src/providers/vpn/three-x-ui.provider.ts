@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from "axios";
 import crypto from "node:crypto";
 import https from "node:https";
 import { env } from "../../config/env";
+import { logger } from "../../infra/logger";
 import { AppError } from "../../shared/errors/app-error";
 import { gigabytesToBytes } from "../../shared/utils/bytes";
 import { createSubscriptionToken, createVpnEmail } from "../../shared/utils/ids";
@@ -55,7 +56,7 @@ export class ThreeXUiVpnProvider implements VpnProvider {
   }
 
   async createClient(input: CreateVpnClientInput): Promise<CreateVpnClientResult> {
-    await this.ensureLoggedIn();
+    await this.ensureLoggedIn(true);
 
     const providerClientId = crypto.randomUUID();
     const clientEmail = createVpnEmail(input.telegramId, input.telegramUsername);
@@ -82,33 +83,22 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       }),
     };
 
-    const response = await this.requestWithFallback("post", [
-      {
-        path: "/panel/api/inbounds/addClient",
-        data: payloadObject,
-        headers: { "Content-Type": "application/json" },
-      },
-      {
-        path: "/panel/api/inbounds/addClient",
-        data: new URLSearchParams({
-          id: input.inboundId,
-          settings: payloadObject.settings,
-        }).toString(),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      },
-      {
-        path: "/xui/API/inbounds/addClient",
-        data: payloadObject,
-        headers: { "Content-Type": "application/json" },
-      },
-      {
-        path: "/xui/API/inbounds/addClient/",
-        data: payloadObject,
-        headers: { "Content-Type": "application/json" },
-      },
-    ]);
+    const response = await this.request("post", "/panel/api/inbounds/addClient", payloadObject, {
+      "Content-Type": "application/json",
+    });
 
-    if (response.status >= 400) {
+    logger.info(
+      {
+        inboundId: input.inboundId,
+        providerClientId,
+        clientEmail,
+        status: response.status,
+        data: response.data,
+      },
+      "3x-ui addClient response",
+    );
+
+    if (response.status >= 400 || response.data?.success === false) {
       throw new AppError(
         `3x-ui addClient failed with status ${response.status}: ${this.stringifyResponse(response.data)}`,
         502,
@@ -206,7 +196,7 @@ export class ThreeXUiVpnProvider implements VpnProvider {
   }
 
   private async updateClient(providerClientId: string, inboundId: string, overrides: Record<string, unknown>) {
-    await this.ensureLoggedIn();
+    await this.ensureLoggedIn(true);
 
     const currentClient = await this.findClientById(inboundId, providerClientId);
     if (!currentClient) {
@@ -226,28 +216,24 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       }),
     };
 
-    const response = await this.requestWithFallback("post", [
-      {
-        path: `/panel/api/inbounds/updateClient/${providerClientId}`,
-        data: payloadObject,
-        headers: { "Content-Type": "application/json" },
-      },
-      {
-        path: `/panel/api/inbounds/updateClient/${providerClientId}`,
-        data: new URLSearchParams({
-          id: inboundId,
-          settings: payloadObject.settings,
-        }).toString(),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      },
-      {
-        path: `/xui/API/inbounds/updateClient/${providerClientId}`,
-        data: payloadObject,
-        headers: { "Content-Type": "application/json" },
-      },
-    ]);
+    const response = await this.request(
+      "post",
+      `/panel/api/inbounds/updateClient/${providerClientId}`,
+      payloadObject,
+      { "Content-Type": "application/json" },
+    );
 
-    if (response.status >= 400) {
+    logger.info(
+      {
+        inboundId,
+        providerClientId,
+        status: response.status,
+        data: response.data,
+      },
+      "3x-ui updateClient response",
+    );
+
+    if (response.status >= 400 || response.data?.success === false) {
       throw new AppError(
         `3x-ui updateClient failed with status ${response.status}: ${this.stringifyResponse(response.data)}`,
         502,
@@ -263,8 +249,8 @@ export class ThreeXUiVpnProvider implements VpnProvider {
     return `${env.THREE_X_UI_SUBSCRIPTION_BASE_URL.replace(/\/$/, "")}/${subId}`;
   }
 
-  private async ensureLoggedIn() {
-    if (this.isLoggedIn) {
+  private async ensureLoggedIn(force = false) {
+    if (this.isLoggedIn && !force) {
       return;
     }
 
@@ -293,6 +279,13 @@ export class ThreeXUiVpnProvider implements VpnProvider {
     }
 
     this.isLoggedIn = true;
+    logger.info(
+      {
+        panelBasePath: this.panelBasePath,
+        hasCookie: Boolean(this.sessionCookie),
+      },
+      "3x-ui login established",
+    );
   }
 
   private buildPanelUrl(path: string): string {
@@ -320,28 +313,6 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       data,
       headers,
     });
-  }
-
-  private async requestWithFallback(
-    method: "get" | "post",
-    attempts: Array<{ path: string; data?: unknown; headers?: Record<string, string> }>,
-  ) {
-    let lastResponse: Awaited<ReturnType<typeof this.request>> | null = null;
-
-    for (const attempt of attempts) {
-      const response = await this.request(method, attempt.path, attempt.data, attempt.headers);
-      lastResponse = response;
-
-      if (response.status !== 404) {
-        return response;
-      }
-    }
-
-    if (!lastResponse) {
-      throw new AppError("3x-ui request fallback chain was empty", 500);
-    }
-
-    return lastResponse;
   }
 
   private async getInbound(inboundId: string): Promise<ThreeXUiInbound> {
