@@ -1,5 +1,5 @@
 import { Bot, InlineKeyboard, InputFile } from "grammy";
-import { NotificationType } from "@prisma/client";
+import { NotificationType, OrderStatus } from "@prisma/client";
 import { env } from "../config/env";
 import { logger } from "../infra/logger";
 import { AppContainer } from "./container";
@@ -763,7 +763,17 @@ export function createTelegramBot(container: AppContainer) {
     await container.adminService.assertAdmin(BigInt(tgUser.id));
 
     const orderId = requireMatch(ctx.match?.[1]);
+    const currentOrder = await container.orderService.getById(orderId);
+
     try {
+      if (currentOrder.status === OrderStatus.FULFILLED) {
+        await ctx.answerCallbackQuery({
+          text: "Заказ уже обработан",
+        });
+        return;
+      }
+
+      await ctx.editMessageReplyMarkup();
       await container.paymentService.markOrderPaidManually(orderId);
       const access = await container.subscriptionService.fulfillOrder(orderId);
       const order = await container.orderService.getById(orderId);
@@ -788,7 +798,16 @@ export function createTelegramBot(container: AppContainer) {
       await ctx.answerCallbackQuery({
         text: "Ошибка при выдаче доступа",
       });
-      await ctx.reply(`Не получилось выдать доступ по заказу ${orderId}. Я уже записал детали в логи backend и bridge.`);
+      await ctx.editMessageText(
+        `Не получилось выдать доступ по заказу ${orderId}.\nЯ уже записал детали в логи backend и bridge.`,
+        {
+          reply_markup: new InlineKeyboard()
+            .text("Подтвердить повторно", `admin_confirm_cb:${orderId}`)
+            .text("Отклонить", `admin_reject_cb:${orderId}`)
+            .row()
+            .text("Профиль", `admin_lookup_cb:${currentOrder.user.telegramId.toString()}`),
+        },
+      );
     }
   });
 

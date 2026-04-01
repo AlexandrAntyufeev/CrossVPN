@@ -92,22 +92,73 @@ export class SubscriptionService {
       const nextExpiry = addDays(nextExpiryBase, order.plan.durationDays);
       const accumulatedTrafficLimit =
         activeSubscription.trafficLimitBytes + gigabytesToBytes(order.plan.trafficLimitGb);
+      const trafficLimitGb = Number(accumulatedTrafficLimit / 1024n / 1024n / 1024n);
 
-      await this.vpnProvider.updateClientExpiryAndTraffic(
-        activeSubscription.vpnAccount.providerClientId,
-        activeSubscription.vpnAccount.inboundId,
-        nextExpiry,
-        Number(accumulatedTrafficLimit / 1024n / 1024n / 1024n),
-      );
+      try {
+        await this.vpnProvider.updateClientExpiryAndTraffic(
+          activeSubscription.vpnAccount.providerClientId,
+          activeSubscription.vpnAccount.inboundId,
+          nextExpiry,
+          trafficLimitGb,
+        );
 
-      await prisma.subscription.update({
-        where: { id: activeSubscription.id },
-        data: {
+        await prisma.subscription.update({
+          where: { id: activeSubscription.id },
+          data: {
+            expiresAt: nextExpiry,
+            trafficLimitBytes: accumulatedTrafficLimit,
+            status: SubscriptionStatus.ACTIVE,
+          },
+        });
+      } catch (error) {
+        if (!this.isMissingVpnClientError(error)) {
+          throw error;
+        }
+
+        logger.warn(
+          {
+            orderId,
+            subscriptionId: activeSubscription.id,
+            vpnAccountId: activeSubscription.vpnAccount.id,
+            providerClientId: activeSubscription.vpnAccount.providerClientId,
+          },
+          "VPN client is missing in provider, recreating account",
+        );
+
+        const recreatedClient = await this.vpnProvider.createClient({
+          userId: order.userId,
+          telegramId: order.user.telegramId,
+          telegramUsername: order.user.username,
+          inboundId: env.THREE_X_UI_INBOUND_ID,
           expiresAt: nextExpiry,
-          trafficLimitBytes: accumulatedTrafficLimit,
-          status: SubscriptionStatus.ACTIVE,
-        },
-      });
+          trafficLimitGb,
+        });
+
+        await prisma.vpnAccount.update({
+          where: { id: activeSubscription.vpnAccount.id },
+          data: {
+            provider: recreatedClient.provider,
+            inboundId: recreatedClient.inboundId,
+            providerClientId: recreatedClient.providerClientId,
+            clientEmail: recreatedClient.clientEmail,
+            clientUuid: recreatedClient.clientUuid,
+            subId: recreatedClient.subId,
+            subscriptionUrl: recreatedClient.subscriptionUrl,
+            status: VpnAccountStatus.ACTIVE,
+            rawProviderJson: recreatedClient.raw as object,
+            lastSyncAt: new Date(),
+          },
+        });
+
+        await prisma.subscription.update({
+          where: { id: activeSubscription.id },
+          data: {
+            expiresAt: nextExpiry,
+            trafficLimitBytes: accumulatedTrafficLimit,
+            status: SubscriptionStatus.ACTIVE,
+          },
+        });
+      }
     }
 
     await this.orderService.markFulfilled(orderId);
@@ -240,5 +291,14 @@ export class SubscriptionService {
         plan: true,
       },
     });
+  }
+
+  private isMissingVpnClientError(error: unknown) {
+    if (!(error instanceof AppError)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return message.includes("not found") || message.includes("client") && message.includes("missing");
   }
 }
