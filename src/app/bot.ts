@@ -134,8 +134,6 @@ function buildPaymentText(amountRub: number): string {
     "После перевода вернитесь в бот и нажмите «Я оплатил».",
     "",
     ...requisites,
-    "",
-    env.MANUAL_PAYMENT_INSTRUCTIONS,
   ].join("\n");
 }
 
