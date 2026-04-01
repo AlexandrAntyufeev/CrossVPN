@@ -51,9 +51,6 @@ function requireMatch(match: string | undefined): string {
 
 function getMainKeyboard() {
   return new InlineKeyboard()
-    .text("Установка", "start_device_picker")
-    .row()
-    .text("Оплатить", "buy_default")
     .text("Мой доступ", "my_access")
     .row()
     .text("Инструкции", "pick_device")
@@ -62,19 +59,17 @@ function getMainKeyboard() {
 
 function getHelpKeyboard() {
   return new InlineKeyboard()
-    .text("Установка", "start_device_picker")
-    .row()
     .text("Создать тикет", "support_ticket")
     .url("Написать в саппорт", `https://t.me/${env.SUPPORT_TELEGRAM_USERNAME.replace(/^@/, "")}`)
     .row()
-    .text("Инструкции", "pick_device");
+    .text("Назад", "back_to_menu");
 }
 
 function getPaymentKeyboard(orderId: string) {
   return new InlineKeyboard()
     .text("Я оплатил", `manual_paid:${orderId}`)
     .row()
-    .text("Помощь", "help");
+    .text("Назад", "client_installed");
 }
 
 function getStartKeyboard() {
@@ -92,7 +87,14 @@ function getAccessDeviceKeyboard() {
     .row()
     .text("Компьютер", "guide:desktop")
     .row()
-    .text("Мой доступ", "my_access");
+    .text("Назад", "back_to_menu");
+}
+
+function getPaymentIntroKeyboard(amountRub: number) {
+  return new InlineKeyboard()
+    .text(`Оплатить ${amountRub} ₽`, "buy_default")
+    .row()
+    .text("Назад", "back_to_start");
 }
 
 function buildTariffLine(amountRub: number, durationDays: number, trafficLimitGb: number): string {
@@ -109,11 +111,13 @@ function buildStartText(): string {
 
 function buildHiddifyOnboardingCaption(): string {
   return [
-    "Установка клиента",
-    "",
     "Ищите приложение Hiddify с таким значком.",
     "Сейчас подберу нужную ссылку под ваше устройство.",
   ].join("\n");
+}
+
+function buildStartCaption(): string {
+  return [buildStartText(), "", buildHiddifyOnboardingCaption()].join("\n");
 }
 
 function buildPaymentText(amountRub: number): string {
@@ -213,6 +217,24 @@ function buildReadyToPayText(amountRub: number, durationDays: number, trafficLim
   ].join("\n");
 }
 
+function buildWaitingPaymentText(): string {
+  return [
+    "Оплата проверяется.",
+    "",
+    "Мы получили отметку об оплате.",
+    "Администратор проверит перевод и после этого бот пришлет ссылку, QR и краткую инструкцию.",
+  ].join("\n");
+}
+
+function buildMainMenuText(access: NonNullable<Awaited<ReturnType<AppContainer["subscriptionService"]["getAccessPackage"]>>>) {
+  return [
+    "Главное меню",
+    "",
+    `Доступ активен до: ${formatDateTime(access.expiresAt)}`,
+    `Трафик: ${formatBytes(access.trafficUsedBytes)} / ${formatBytes(access.trafficLimitBytes)}`,
+  ].join("\n");
+}
+
 function buildGuideText(device: "iphone" | "android" | "desktop", subscriptionUrl?: string | null): string {
   const common = [
     "Важно:",
@@ -288,7 +310,7 @@ async function sendAccessPackage(bot: Bot, chatId: string, access: Awaited<Retur
   }
 
   await bot.api.sendMessage(chatId, buildAccessSummary(access), {
-    reply_markup: getAccessDeviceKeyboard(),
+    reply_markup: getMainKeyboard(),
   });
 
   if (access.qrCodeBuffer) {
@@ -306,6 +328,32 @@ async function sendAccessPackage(bot: Bot, chatId: string, access: Awaited<Retur
       logger.error({ err: error, chatId }, "Failed to send access QR");
         await bot.api.sendMessage(chatId, "Если QR не пришел картинкой, используйте ссылку из сообщения выше.");
     }
+  }
+}
+
+async function updateInteractiveMessage(ctx: any, text: string, keyboard?: InlineKeyboard) {
+  const message = ctx.callbackQuery?.message;
+
+  if (message?.photo?.length || typeof message?.caption === "string") {
+    try {
+      await ctx.editMessageCaption(text, {
+        reply_markup: keyboard,
+      });
+      return;
+    } catch (error) {
+      logger.debug({ err: error }, "Failed to edit caption, trying text");
+    }
+  }
+
+  try {
+    await ctx.editMessageText(text, {
+      reply_markup: keyboard,
+    });
+  } catch (error) {
+    logger.error({ err: error }, "Failed to update interactive message");
+    await ctx.reply(text, {
+      reply_markup: keyboard,
+    });
   }
 }
 
@@ -364,7 +412,7 @@ export function createTelegramBot(container: AppContainer) {
 
     await sendHiddifyPhoto(
       ctx as any,
-      [buildHiddifyOnboardingCaption(), "", buildStartText()].join("\n"),
+      buildStartCaption(),
       getStartKeyboard(),
     );
 
@@ -388,9 +436,7 @@ export function createTelegramBot(container: AppContainer) {
     await ctx.answerCallbackQuery();
 
     if (env.PAYMENT_PROVIDER === "manual") {
-      await ctx.reply(buildPaymentText(order.amountRub), {
-        reply_markup: getPaymentKeyboard(order.id),
-      });
+      await updateInteractiveMessage(ctx, buildPaymentText(order.amountRub), getPaymentKeyboard(order.id));
       return;
     }
 
@@ -409,9 +455,11 @@ export function createTelegramBot(container: AppContainer) {
   });
 
   bot.command("buy", async (ctx) => {
-    await ctx.reply("Сначала установите Hiddify, а затем переходите к оплате.", {
-      reply_markup: getStartKeyboard(),
-    });
+    await sendHiddifyPhoto(
+      ctx as any,
+      buildStartCaption(),
+      getStartKeyboard(),
+    );
   });
 
   bot.callbackQuery("my_access", async (ctx) => {
@@ -455,11 +503,10 @@ export function createTelegramBot(container: AppContainer) {
 
   bot.callbackQuery("help", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(
+    await updateInteractiveMessage(
+      ctx,
       "Если что-то не работает, создайте тикет или сразу напишите в саппорт. Так будет проще и быстрее разобраться.",
-      {
-        reply_markup: getHelpKeyboard(),
-      },
+      getHelpKeyboard(),
     );
   });
 
@@ -512,27 +559,63 @@ export function createTelegramBot(container: AppContainer) {
 
   bot.callbackQuery("pick_device", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Для какого устройства показать инструкцию?", {
-      reply_markup: getAccessDeviceKeyboard(),
-    });
+    await updateInteractiveMessage(ctx, "Для какого устройства показать инструкцию?", getAccessDeviceKeyboard());
   });
 
   bot.callbackQuery("start_device_picker", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Для какого устройства нужен доступ?", {
-      reply_markup: getStartKeyboard(),
-    });
+    await updateInteractiveMessage(
+      ctx,
+      buildStartCaption(),
+      getStartKeyboard(),
+    );
+  });
+
+  bot.callbackQuery("back_to_start", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await updateInteractiveMessage(
+      ctx,
+      buildStartCaption(),
+      getStartKeyboard(),
+    );
+  });
+
+  bot.callbackQuery("back_to_menu", async (ctx) => {
+    const tgUser = requireTelegramUser(ctx);
+    const user = await container.userService.findByTelegramId(BigInt(tgUser.id));
+
+    await ctx.answerCallbackQuery();
+
+    if (!user) {
+      await updateInteractiveMessage(
+        ctx,
+        buildStartCaption(),
+        getStartKeyboard(),
+      );
+      return;
+    }
+
+    const access = await container.subscriptionService.getAccessPackage(user.id);
+    if (!access) {
+      await updateInteractiveMessage(
+        ctx,
+        buildStartCaption(),
+        getStartKeyboard(),
+      );
+      return;
+    }
+
+    await updateInteractiveMessage(ctx, buildMainMenuText(access), getMainKeyboard());
   });
 
   bot.callbackQuery("client_installed", async (ctx) => {
     await ctx.answerCallbackQuery();
     const plan = await container.planService.getDefaultPlan();
-    await ctx.reply(buildReadyToPayText(plan.priceRub, plan.durationDays, plan.trafficLimitGb), {
-      reply_markup: new InlineKeyboard()
-        .text(`Оплатить ${plan.priceRub} ₽`, "buy_default")
-        .row()
-        .text("Другое устройство", "start_device_picker"),
-    });
+    await updateInteractiveMessage(
+      ctx,
+      buildReadyToPayText(plan.priceRub, plan.durationDays, plan.trafficLimitGb),
+      getPaymentIntroKeyboard(plan.priceRub),
+    );
   });
 
   bot.callbackQuery(/^setup:(iphone|android|windows|desktop)$/, async (ctx) => {
@@ -540,7 +623,7 @@ export function createTelegramBot(container: AppContainer) {
     const device = rawDevice === "windows" ? "desktop" : rawDevice;
 
     await ctx.answerCallbackQuery();
-    await sendHiddifyPhoto(ctx as any, buildInstallText(device), getInstallKeyboard(device));
+    await updateInteractiveMessage(ctx, buildInstallText(device), getInstallKeyboard(device));
   });
 
   bot.callbackQuery(/^guide:(iphone|android|windows|desktop)$/, async (ctx) => {
@@ -559,13 +642,11 @@ export function createTelegramBot(container: AppContainer) {
     const device = rawDevice === "windows" ? "desktop" : rawDevice;
 
     if (!access) {
-      await sendHiddifyPhoto(ctx as any, buildInstallText(device), getInstallKeyboard(device));
+      await updateInteractiveMessage(ctx, buildInstallText(device), getInstallKeyboard(device));
       return;
     }
 
-    await ctx.reply(buildGuideText(device, access.subscriptionUrl), {
-      reply_markup: getAccessDeviceKeyboard(),
-    });
+    await updateInteractiveMessage(ctx, buildGuideText(device, access.subscriptionUrl), getAccessDeviceKeyboard());
 
     if (access.qrCodeBuffer) {
       try {
@@ -598,9 +679,11 @@ export function createTelegramBot(container: AppContainer) {
 
     const qrPayload = buildQrPayload(order.amountRub);
     if (!qrPayload) {
-      await ctx.reply("Сейчас доступен только перевод по номеру телефона. После оплаты нажмите «Я оплатил».", {
-        reply_markup: getPaymentKeyboard(order.id),
-      });
+      await updateInteractiveMessage(
+        ctx,
+        "Сейчас доступен только перевод по номеру телефона. После оплаты нажмите «Я оплатил».",
+        getPaymentKeyboard(order.id),
+      );
       return;
     }
 
@@ -635,9 +718,7 @@ export function createTelegramBot(container: AppContainer) {
       return;
     }
 
-    await ctx.reply(buildPaymentText(order.amountRub), {
-      reply_markup: getPaymentKeyboard(order.id),
-    });
+    await updateInteractiveMessage(ctx, buildPaymentText(order.amountRub), getPaymentKeyboard(order.id));
   });
 
   bot.callbackQuery(/^manual_paid:(.+)$/, async (ctx) => {
@@ -660,7 +741,7 @@ export function createTelegramBot(container: AppContainer) {
       return;
     }
 
-    await ctx.reply("Уведомили администратора. После проверки оплаты бот пришлет ссылку, QR и короткую инструкцию.");
+    await updateInteractiveMessage(ctx, buildWaitingPaymentText());
 
     for (const adminTelegramId of env.ADMIN_TELEGRAM_IDS) {
       await bot.api.sendMessage(
@@ -691,7 +772,7 @@ export function createTelegramBot(container: AppContainer) {
         text: "Оплата подтверждена",
       });
       try {
-        await bot.api.sendMessage(order.user.telegramId.toString(), "Оплата подтверждена. ПУК активирован.");
+        await bot.api.sendMessage(order.user.telegramId.toString(), "Оплата подтверждена. Доступ активирован.");
         await sendAccessPackage(bot, order.user.telegramId.toString(), access);
         await ctx.editMessageText(
           `Заказ ${orderId} подтвержден.\nПользователь получил доступ.\nSubscription: ${access?.subscriptionUrl ?? "не найден"}`,
