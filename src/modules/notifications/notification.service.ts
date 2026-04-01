@@ -12,4 +12,21 @@ export class NotificationService {
       },
     });
   }
+
+  async wasSentBetween(userId: string, type: NotificationType, from: Date, to: Date) {
+    const existing = await prisma.notificationLog.findFirst({
+      where: {
+        userId,
+        type,
+        status: NotificationStatus.SENT,
+        sentAt: {
+          gte: from,
+          lt: to,
+        },
+      },
+      select: { id: true },
+    });
+
+    return Boolean(existing);
+  }
 }

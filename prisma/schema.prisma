@@ -51,9 +51,11 @@ enum NotificationType {
   PAYMENT_LINK
   PAYMENT_SUCCEEDED
   ACCESS_ISSUED
+  EXPIRY_5_DAYS
   EXPIRY_3_DAYS
   EXPIRY_1_DAY
   EXPIRED
+  ADMIN_SERVERS_20TH
 }
 
 enum NotificationStatus {
