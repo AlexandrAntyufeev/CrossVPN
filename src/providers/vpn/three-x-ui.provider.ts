@@ -268,6 +268,11 @@ export class ThreeXUiVpnProvider implements VpnProvider {
     const setCookie = response.headers["set-cookie"];
     if (Array.isArray(setCookie) && setCookie.length > 0) {
       this.sessionCookie = setCookie.map((value) => value.split(";")[0]).join("; ");
+    } else if (typeof setCookie === "string" && setCookie.length > 0) {
+      this.sessionCookie = setCookie
+        .split(",")
+        .map((value) => (value.split(";")[0] ?? "").trim())
+        .join("; ");
     } else {
       this.sessionCookie = null;
     }
@@ -277,6 +282,8 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       {
         panelBasePath: this.panelBasePath,
         hasCookie: Boolean(this.sessionCookie),
+        headerKeys: Object.keys(response.headers),
+        setCookieType: Array.isArray(setCookie) ? "array" : typeof setCookie,
       },
       "3x-ui login established",
     );
