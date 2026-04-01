@@ -6,7 +6,9 @@ import { PaymentService } from "../modules/payments/payment.service";
 import { PlanService } from "../modules/plans/plan.service";
 import { SubscriptionService } from "../modules/subscriptions/subscription.service";
 import { UserService } from "../modules/users/user.service";
+import { env } from "../config/env";
 import { YooKassaPaymentProvider } from "../providers/payments/yookassa.provider";
+import { BridgeVpnProvider } from "../providers/vpn/bridge-vpn.provider";
 import { ThreeXUiVpnProvider } from "../providers/vpn/three-x-ui.provider";
 
 export function createContainer() {
@@ -15,7 +17,7 @@ export function createContainer() {
   const orderService = new OrderService();
   const notificationService = new NotificationService();
   const qrService = new QrService();
-  const vpnProvider = new ThreeXUiVpnProvider();
+  const vpnProvider = env.VPN_BRIDGE_URL ? new BridgeVpnProvider() : new ThreeXUiVpnProvider();
   const paymentProvider = new YooKassaPaymentProvider();
   const paymentService = new PaymentService(paymentProvider, orderService);
   const adminService = new AdminService();

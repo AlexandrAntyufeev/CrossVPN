@@ -46,6 +46,8 @@ const envSchema = z.object({
     .string()
     .default("true")
     .transform((value) => value === "true"),
+  VPN_BRIDGE_URL: z.string().default(""),
+  VPN_BRIDGE_TOKEN: z.string().default(""),
   CRON_EXPIRY_REMINDER: z.string().default("0 * * * *"),
   CRON_SUBSCRIPTION_SYNC: z.string().default("15 * * * *"),
 });

@@ -33,6 +33,7 @@ MVP-сервис продажи и автоматической выдачи VPN
 - `THREE_X_UI_PASSWORD`
 - `THREE_X_UI_INBOUND_ID`
 - `THREE_X_UI_SUBSCRIPTION_BASE_URL`
+- `VPN_BRIDGE_URL` и `VPN_BRIDGE_TOKEN`, если используете bridge рядом с `3x-ui`
 
 ## Локальный запуск
 
@@ -46,6 +47,15 @@ MVP-сервис продажи и автоматической выдачи VPN
 ## Запуск через Docker Compose
 
 `docker compose up --build`
+
+## Рекомендуемый прод-режим
+
+Для `3x-ui` лучше использовать bridge на том же сервере, где стоит VPN-панель:
+
+- VPN-сервер: `3x-ui + bridge`
+- bot-сервер: `Telegram bot + Postgres + backend`
+
+Тогда основной backend не логинится в `3x-ui` напрямую, а работает через `VPN_BRIDGE_URL`.
 
 ## Что делает MVP flow
 
