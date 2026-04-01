@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from "axios";
 import crypto from "node:crypto";
 import https from "node:https";
+import { URLSearchParams } from "node:url";
 import { env } from "../../config/env";
 import { logger } from "../../infra/logger";
 import { AppError } from "../../shared/errors/app-error";
@@ -258,24 +259,17 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       throw new AppError("3x-ui credentials are not configured", 500);
     }
 
-    const response = await this.http.post(
-      this.buildPanelUrl("/login"),
-      new URLSearchParams({
-        username: env.THREE_X_UI_USERNAME,
-        password: env.THREE_X_UI_PASSWORD,
-      }).toString(),
-      {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      },
-    );
+    const response = await this.performLoginRequest();
 
-    if (response.status >= 400) {
-      throw new AppError(`3x-ui login failed with status ${response.status}`, 502);
+    if (response.statusCode >= 400) {
+      throw new AppError(`3x-ui login failed with status ${response.statusCode}`, 502);
     }
 
     const setCookie = response.headers["set-cookie"];
     if (Array.isArray(setCookie) && setCookie.length > 0) {
       this.sessionCookie = setCookie.map((value) => value.split(";")[0]).join("; ");
+    } else {
+      this.sessionCookie = null;
     }
 
     this.isLoggedIn = true;
@@ -286,6 +280,50 @@ export class ThreeXUiVpnProvider implements VpnProvider {
       },
       "3x-ui login established",
     );
+  }
+
+  private async performLoginRequest(): Promise<{
+    statusCode: number;
+    headers: Record<string, string | string[] | undefined>;
+    body: string;
+  }> {
+    const loginUrl = new URL(this.buildPanelUrl("/login"), this.http.defaults.baseURL);
+    const body = new URLSearchParams({
+      username: env.THREE_X_UI_USERNAME,
+      password: env.THREE_X_UI_PASSWORD,
+    }).toString();
+
+    return new Promise((resolve, reject) => {
+      const request = https.request(
+        loginUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Length": Buffer.byteLength(body),
+          },
+          rejectUnauthorized: env.THREE_X_UI_VERIFY_TLS,
+        },
+        (response) => {
+          let responseBody = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk) => {
+            responseBody += chunk;
+          });
+          response.on("end", () => {
+            resolve({
+              statusCode: response.statusCode ?? 500,
+              headers: response.headers,
+              body: responseBody,
+            });
+          });
+        },
+      );
+
+      request.on("error", reject);
+      request.write(body);
+      request.end();
+    });
   }
 
   private buildPanelUrl(path: string): string {
