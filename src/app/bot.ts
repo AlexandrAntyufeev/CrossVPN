@@ -95,15 +95,14 @@ function buildTariffLine(amountRub: number, durationDays: number, trafficLimitGb
   return `${amountRub} ₽ / ${durationDays} дней / ${trafficLimitGb} GB`;
 }
 
-function buildStartText(amountRub: number, durationDays: number, trafficLimitGb: number): string {
+function buildStartText(): string {
   return [
     "CrossVPN",
     "",
-    "Сначала выберите свое устройство и установите Hiddify.",
-    "После этого можно сразу переходить к оплате и получению доступа.",
+    "Добро пожаловать.",
+    "Сначала подскажу, какой клиент установить и под какое устройство нужен VPN.",
     "",
-    `Тариф: ${buildTariffLine(amountRub, durationDays, trafficLimitGb)}`,
-    "После оплаты бот сам пришлет subscription link, QR и инструкцию для вашего устройства.",
+    "Выберите устройство ниже.",
   ].join("\n");
 }
 
@@ -369,13 +368,8 @@ export function createTelegramBot(container: AppContainer) {
       lastName: tgUser.last_name,
     });
 
-    const plan = await container.planService.getDefaultPlan();
-
     await sendHiddifyPhoto(ctx as any, buildHiddifyOnboardingCaption());
-    await ctx.reply(buildStartText(plan.priceRub, plan.durationDays, plan.trafficLimitGb), {
-      reply_markup: getMainKeyboard(),
-    });
-    await ctx.reply("Какое у вас устройство?", {
+    await ctx.reply(buildStartText(), {
       reply_markup: getDeviceKeyboard(),
     });
 
